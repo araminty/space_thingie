@@ -1,0 +1,246 @@
+[gd_scene load_steps=7 format=3 uid="uid://cb2eiitfh2wjg"]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/galaxy/galaxy_map.gd" id="2_galaxy"]
+[ext_resource type="Script" path="res://scripts/galaxy/orbit_camera.gd" id="3_orbit"]
+[ext_resource type="Script" path="res://scripts/system/system_view.gd" id="4_system"]
+
+[sub_resource type="Environment" id="Environment_dark"]
+background_mode = 1
+background_color = Color(0.02, 0.0313726, 0.0784314, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.55, 0.62, 0.75, 1)
+ambient_light_energy = 0.35
+
+[sub_resource type="StyleBoxFlat" id="StyleBox_panel"]
+bg_color = Color(0.0313726, 0.0470588, 0.0862745, 0.94)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.62, 0.71, 0.85, 0.35)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+shadow_color = Color(0, 0, 0, 0.45)
+shadow_size = 12
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_dark")
+
+[node name="GalaxyRoot" type="Node3D" parent="."]
+
+[node name="OrbitCamera" type="Node3D" parent="GalaxyRoot"]
+script = ExtResource("3_orbit")
+
+[node name="Camera3D" type="Camera3D" parent="GalaxyRoot/OrbitCamera"]
+current = true
+fov = 55.0
+near = 0.01
+far = 50.0
+
+[node name="GalaxyMap" type="Node3D" parent="GalaxyRoot"]
+script = ExtResource("2_galaxy")
+
+[node name="Stars" type="MultiMeshInstance3D" parent="GalaxyRoot/GalaxyMap"]
+
+[node name="Lanes" type="MeshInstance3D" parent="GalaxyRoot/GalaxyMap"]
+
+[node name="SystemRoot" type="Node3D" parent="."]
+visible = false
+
+[node name="OrbitCamera" type="Node3D" parent="SystemRoot"]
+script = ExtResource("3_orbit")
+distance = 8.0
+min_distance = 0.4
+max_distance = 220.0
+wasd_speed = 4.0
+
+[node name="Camera3D" type="Camera3D" parent="SystemRoot/OrbitCamera"]
+current = false
+fov = 55.0
+near = 0.02
+far = 500.0
+
+[node name="SystemView" type="Node3D" parent="SystemRoot"]
+script = ExtResource("4_system")
+
+[node name="Bodies" type="Node3D" parent="SystemRoot/SystemView"]
+
+[node name="UI" type="CanvasLayer" parent="."]
+
+[node name="TimeHud" type="Control" parent="UI"]
+layout_mode = 3
+anchors_preset = 0
+offset_right = 400.0
+offset_bottom = 48.0
+mouse_filter = 2
+
+[node name="PlayButton" type="Button" parent="UI/TimeHud"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 10.0
+offset_right = 102.0
+offset_bottom = 42.0
+text = "▶ Play"
+
+[node name="DayLabel" type="Label" parent="UI/TimeHud"]
+layout_mode = 0
+offset_left = 112.0
+offset_top = 14.0
+offset_right = 280.0
+offset_bottom = 38.0
+theme_override_colors/font_color = Color(0.78, 0.86, 0.95, 0.95)
+theme_override_font_sizes/font_size = 14
+text = "day 0  00:00"
+
+[node name="GalaxyHud" type="Label" parent="UI"]
+offset_left = 290.0
+offset_top = 14.0
+offset_right = 1400.0
+offset_bottom = 42.0
+theme_override_colors/font_color = Color(0.78, 0.86, 0.95, 0.9)
+theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.7)
+theme_override_constants/shadow_offset_x = 1
+theme_override_constants/shadow_offset_y = 1
+theme_override_font_sizes/font_size = 14
+text = "Loading galaxy…"
+
+[node name="SystemHud" type="Control" parent="UI"]
+visible = false
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="BackButton" type="Button" parent="UI/SystemHud"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 52.0
+offset_right = 150.0
+offset_bottom = 84.0
+text = "← Galaxy map"
+
+[node name="Title" type="Label" parent="UI/SystemHud"]
+layout_mode = 0
+offset_left = 160.0
+offset_top = 56.0
+offset_right = 1100.0
+offset_bottom = 84.0
+theme_override_colors/font_color = Color(0.9, 0.94, 1, 1)
+theme_override_font_sizes/font_size = 16
+text = "System"
+
+[node name="Info" type="RichTextLabel" parent="UI/SystemHud"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 96.0
+offset_right = 340.0
+offset_bottom = 200.0
+mouse_filter = 2
+theme_override_colors/default_color = Color(0.82, 0.88, 0.95, 1)
+theme_override_font_sizes/normal_font_size = 13
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+text = "Click objects for info."
+
+[node name="Flags" type="Control" parent="UI/SystemHud"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="FlagHud" type="Label" parent="UI/SystemHud"]
+layout_mode = 0
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 12.0
+offset_top = -28.0
+offset_right = 280.0
+offset_bottom = -10.0
+grow_vertical = 0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.62, 0.71, 0.85, 0.85)
+theme_override_font_sizes/font_size = 12
+text = ""
+
+[node name="PlanetPanel" type="PanelContainer" parent="UI/SystemHud"]
+visible = false
+layout_mode = 0
+offset_left = 12.0
+offset_top = 96.0
+offset_right = 332.0
+offset_bottom = 460.0
+theme_override_styles/panel = SubResource("StyleBox_panel")
+
+[node name="Margin" type="MarginContainer" parent="UI/SystemHud/PlanetPanel"]
+layout_mode = 2
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 12
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 14
+
+[node name="VBox" type="VBoxContainer" parent="UI/SystemHud/PlanetPanel/Margin"]
+layout_mode = 2
+theme_override_constants/separation = 10
+
+[node name="Head" type="HBoxContainer" parent="UI/SystemHud/PlanetPanel/Margin/VBox"]
+layout_mode = 2
+
+[node name="Titles" type="VBoxContainer" parent="UI/SystemHud/PlanetPanel/Margin/VBox/Head"]
+layout_mode = 2
+size_flags_horizontal = 3
+
+[node name="PanelTitle" type="Label" parent="UI/SystemHud/PlanetPanel/Margin/VBox/Head/Titles"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.93, 0.95, 0.99, 1)
+theme_override_font_sizes/font_size = 16
+text = "Planet"
+
+[node name="PanelKind" type="Label" parent="UI/SystemHud/PlanetPanel/Margin/VBox/Head/Titles"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.62, 0.71, 0.85, 1)
+theme_override_font_sizes/font_size = 12
+text = "Kind"
+
+[node name="Close" type="Button" parent="UI/SystemHud/PlanetPanel/Margin/VBox/Head"]
+layout_mode = 2
+flat = true
+text = "×"
+
+[node name="Preview" type="TextureRect" parent="UI/SystemHud/PlanetPanel/Margin/VBox"]
+custom_minimum_size = Vector2(72, 72)
+layout_mode = 2
+size_flags_horizontal = 0
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Stats" type="RichTextLabel" parent="UI/SystemHud/PlanetPanel/Margin/VBox"]
+layout_mode = 2
+custom_minimum_size = Vector2(0, 90)
+theme_override_colors/default_color = Color(0.91, 0.93, 0.97, 1)
+theme_override_font_sizes/normal_font_size = 13
+bbcode_enabled = true
+fit_content = true
+scroll_active = false
+
+[node name="Empty" type="Label" parent="UI/SystemHud/PlanetPanel/Margin/VBox"]
+custom_minimum_size = Vector2(0, 80)
+layout_mode = 2
+theme_override_colors/font_color = Color(0.44, 0.51, 0.61, 1)
+theme_override_font_sizes/font_size = 12
+text = "Further planetary data will appear here."
+horizontal_alignment = 1
+vertical_alignment = 1
+autowrap_mode = 3

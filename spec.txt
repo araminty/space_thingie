@@ -1,0 +1,337 @@
+# Starmap prototype — working spec
+# Maintained by the agent. User jot notes go in instructions.txt.
+# On "update": read instructions.txt → merge new notes here → implement.
+
+## Overview
+
+Prototype starmap for a hypothetical space 4X game.
+Python script via WSL (`.venv/bin/python starmap.py`).
+Interactive 3D view: Plotly → `starmap.html` (static preview `starmap.png`).
+**Godot 4 viewer:** `godot/` loads JSON from `godot/data/galaxy/` +
+`godot/data/systems/` via `.venv/bin/python export_godot.py`. LMB a star →
+system view (planets, asteroid fields, hyperlane ovals). Multi-star systems use
+wide separations with per-host planets. Planets get **zoom
+inset flags** (circle-in-square + hockey-stick leader) that track on screen;
+click inset or body → left info panel. Shared **▶ Play** / Space (visible on
+galaxy map and in systems) advances a galaxy-wide clock at **0.5 days/sec**
+(prior rate ÷ 48; half-hour steps). Orbits **lerp** between whole-day samples.
+Hyperlane portals stay fixed. Esc closes panel, then returns to galaxy.
+Hyperlane oval click jumps to the destination system.
+**Web / GitHub Pages:** `python export_web.py` builds `site/` (galaxy +
+featured system HTML). Workflow `.github/workflows/deploy-pages.yml` publishes
+that folder on push to `main`/`master` when Pages is set to “GitHub Actions”.
+
+Final game scale may be a couple thousand stars; current prototype uses the
+sizes below.
+
+## Map geometry
+
+- Roughly even spread across a galactic disk, with soft empty areas / variation
+  (not tight clusters separated by huge voids).
+- Disk is **wider** (`region_size` ~1.72); stars toward the **outer play-disk
+  rim** use slightly larger separation (rim spread).
+- Beyond the play disk: a **sparse grey outer perimeter** (~2–4 stars wide,
+  very low density) that further widens the galaxy. Ten **gold treasure**
+  stars sit inside that grey rim (only grey neighbors; not on the play-disk
+  border).
+- Star placement uses a **spatial hash grid** for min-distance checks (fast regen).
+- **Height (Z):** galactic core keeps fuller vertical variation; **outer** stars
+  are flatter. The disk expands so typical neighbor distances stay in a similar
+  range after flattening. Minimum XY separation keeps the top-down view readable.
+- Hard cap: a star’s `|z|` from the midplane is at most **⅓ of the XY distance
+  to its nearest neighbor** (cheap anti-stacking rule after placement).
+- Lanes connect adjacent stars:
+  - Adjacency radius scales with local neighborhood density.
+  - Reject lanes that pass too close to a third star.
+  - Fallback so the geometric network stays connected (core and outer separately
+    where the galactic core rule requires it).
+
+## Generation pipeline (cached)
+
+Star **positions** are generated once and cached under `cache/`. Cluster
+assignment and lanes are a separate **classify** step on those positions.
+
+| Command | Behavior |
+|---------|----------|
+| `python starmap.py` | Use caches when fingerprints match; else rebuild what’s stale |
+| `--redraw` | Reload cached map; redraw only (for **color / viz** tweaks) |
+| `--reclassify` | Keep positions; rebuild tiers + lanes |
+| `--regen` | Force new positions + classification |
+
+Color-only changes should use `--redraw` so the layout is not regenerated.
+
+## Scale
+
+- About **2000 stars outside the galactic core**.
+- Galactic core stars are **extra** on top (density-matched to the outer field).
+
+## Star-system multiplicity
+
+Every star system is tagged at classification time as **single**, **binary**, or
+**trinary** (targets ≈ **40% / 45% / 15%**). Stored on the map (`multiplicity`);
+shown in star hover text. On the galactic map, binaries render as a close pair
+of dots and trinaries as a tiny triangle (Godot MultiMesh companions + Plotly
+offset markers).
+
+**Component layout:** Singles sit at the system origin. Binary/trinary companions
+are **widely separated**: pairwise distance ∈ **[L, 3L]** where
+`L = SINGLE_SYSTEM_LIMIT_AU` (16 AU — the single-star outer envelope). Binaries
+are opposite through the barycenter; trinaries form an equilateral triangle
+about the shared center.
+
+**Planets / fields:** Each component star rolls its own planets and asteroid
+fields, which orbit **that** star. A planet (or field outer edge) is rejected
+unless its closest approach to every other star is ≥ **3×** its orbital radius
+around its host (circular rule ⇒ `a ≤ D/4` to the nearest other star).
+
+**Named homeworlds (trade seeds):** Each home cluster seeds
+`n_homeworlds_per_cluster` (3) dispersed homeworlds (≥`homeworld_min_hops`
+apart). Those seeds are assigned **lore names** from
+`lore_homeworlds.py` / conventional-species history (kids-to-feed roster).
+**Sol** and **Brightstep** are always among the named seeds when ≥2 seeds
+exist. Names are visible on the galactic map (Plotly text + Godot Label3D).
+Population/trade still cascade from these seeds via `homeworld_id`.
+
+**Sol special:** The Sol seed gets a fixed single-star system: Mercury, Venus,
+Earth (homeworld), Mars, Jupiter, Saturn, Uranus, Neptune; Main Belt (dwarfs
+folded in); **Greeks** and **Trojans** as camps on Jupiter’s orbit (±60° /
+L4–L5). No trans-Neptunian swarm. Contents `special: "sol"`.
+
+**Neverdark special (Brightstep):** The Brightstep seed is a
+**close-pair trinary**: two stars in a tight fixed pair + one distant tertiary
+(separation ∈ [L, 3L] from the pair). Stars are shifted so the **μ-weighted
+barycenter** is the system origin. The **Neverdark** homeworld occupies a
+**horseshoe** about that barycenter with radius **≈ D/20** (D = binary-midpoint
+↔ tertiary separation). Motion: travel the circle with a **50° gap** always
+oriented toward the distant tertiary; one way over **~30 days**, then reverse
+(full out-and-back ≈ 60 days) — not Keplerian mean motion. Climate tags:
+equatorial ice wall, burning poles, temperate mid-bands, large habitable zone
+on the binary-facing pole, tiny temperate cap on the far pole; pole flip still
+centuries away. Every **other** star has an independent **~1/20,000** chance to
+roll the same layout (generic names; not labeled Brightstep on the galaxy map).
+Contents cache **v9**; `sol_star_index`, `neverdark_star_index`, and
+`neverdark_indices` are stored in the contents payload.
+
+**Hyperlane ring:** Portals sit on one shared ring centered on the combined
+system origin. Ring radius is beyond all stars and planet/field envelopes so
+every body stays inside the ring.
+
+## Star-system gravity & planets
+
+Each system has a **gravitational parameter** `μ` (AU³/day²) stored as
+`gravitational_parameter` (display / primary). Component stars also carry a
+local `mu` for host-centered periods: `T = 2π √(a³/μ_host)`.
+When planets are generated, one full orbit is sampled in **1-day** steps.
+
+**Demo view (for now):** `python starmap.py --system` (or `system_view.py`)
+opens a **widely separated binary** with per-star worlds + a shared hyperlane
+ring. Planets render as **viewer-facing 2D zoom insets** (circle-in-square frames).
+
+**Asteroid fields:** orbit at a semi-major axis like planets, but render as a
+single nearly-flat stippled object — **ring** (annulus with radial width) or
+**camp** (oval smudge along the arc, e.g. Trojan/Greek). Texture is a static
+dot field (grey / grey-brown / grey-blue), advanced by rigid mean motion.
+Demo includes a main-belt ring plus Trojan/Greek camps on Gas Giant A’s orbit.
+Asteroid fields have **no flag markers**; click the field stipple in the 3D view
+to open the same left-side info panel used for planets.
+
+**Hyperlane entry points:** Each galaxy-map lane neighbor becomes a **stationary**
+portal on the solar disk (galactic Z ignored — flat with the planets). Visual:
+simple cyan **oval** (soft fill + outline) plus an **outward arrow** (3D decorative
+only, not clickable). The oval is clickable and opens the info panel with the
+linked system. Placement: **~90%** beyond all planets; **~10%** sunward of the
+outermost gas giant). Portals do **not** orbit. All portals share one ring
+radius about the system center (contents **v4**). Regenerating contents clears
+cached system HTML.
+
+**Flags:** One transparent HTML 2D object per planet (`#overlays`): a small zoom
+inset (~¼ prior size) in the **upper-right**, plus a **hockey-stick** SVG leader
+(slant down to the planet; horizontal into the inset at/above the planet’s
+screen level). The inset box is **clickable** and opens a left-side planet info
+panel (sparse for now). Positions use Plotly’s `cameraParams` MVP and track as
+the camera moves. Extraneous space is transparent. A corner HUD shows
+`overlay: N/M flags`. System views open in a **same-tab iframe** over the
+galaxy map (HTML cached under `cache/systems/`). Reopening the same system
+reuses the already-loaded iframe (no Plotly re-init). **Galaxy map** / Esc
+hides the iframe via `postMessage`.
+
+**System contents:** Map generation also rolls **fast** per-star planets /
+asteroid-field / hyperlane-entry properties into `cache/system_contents.json`
+(~0.1 s), using galaxy lanes for portal directions. Interactive system HTML is
+built **on demand** when a star is clicked (cached under `cache/systems/`). Use
+`python starmap.py --serve` (or `--show`) so clicks can reach the local render
+API; a progress bar shows while the first view builds.
+
+**Viewbox / clipping:** Logical skybox = **20×** largest orbit. Scene is drawn in
+**unit viewbox** coords (axis ±1, stars on the 0.99 shell) so depth precision
+stays sane; WebGL near plane is softened after plot. Camera may pan/orbit; eye
+distance from look-at is capped at **~10%** of the viewbox for outer framing
+(no min zoom floor). Non-giants are speck-sized; gas giants are tiny vs stars.
+
+## Progressive unlocking
+
+Locked stars stay visible but use distinct colors.
+Travel is only allowed along unlocked lanes.
+
+### 1) Home clusters (~20% of non-core stars) — white
+
+- Compact pockets scattered in the outer galaxy.
+- Cluster count scales with size; each ~2% of galaxy area → ~10 clusters at 20%.
+- No home stars in the galactic core.
+- **Grouping-based layout:** the non-core disk is partitioned into contiguous
+  groupings of ~60 stars. Order: **gap** corridors → **home** groupings →
+  **ancient** groupings → locked filler. A home grouping borders **at most one**
+  other home grouping. Ancient groupings can be numerous (clusters are small;
+  most stars in the group stay locked). Home clusters sit inside their grouping
+  on far edges when two homes adjoin, leaving a locked strip between them.
+- Internally fully connected (does not depend on the beltway).
+- At game start, **only intra-home-cluster lanes** are traversable.
+
+### 2) Ring network / beltway — blue (same-Ancient chains green)
+
+- Thin tendrils around the galaxy; parallel trunks ~4–5 mean star-spacings apart
+  (not a thick filled ring).
+- Links home clusters for later mid-game travel.
+- May pass through a home cluster or touch its edge.
+- Stars on a tendril that cut through a home cluster are **beltway (blue)**,
+  not home. Remaining home stars connect to those beltway stars with
+  **home-colored (white) links**.
+- Home clusters stay internally connected without the ring.
+- Ring stars/lanes start **locked**.
+
+### 3) Locked frontier (remainder) — escalating red
+
+- Visible but not traversable yet (geometric lanes may exist; locked for now).
+- Split into darkness tiers L0→L3 (see **Locked frontier shades** below).
+- Lanes between home and frontier are locked for now.
+
+## Lane paint hierarchy
+
+Lane color is chosen from the two endpoints using priority
+**black > grey(wall/rim)/treasure > red > home(white) > beltway(blue/green)**
+(first match on either side wins):
+
+| Priority | Star side | Lane color |
+|----------|-----------|------------|
+| 1 | galactic core | black |
+| 2 | locked wall / outer rim / treasure | grey or gold |
+| 3 | frontier | red |
+| 4 | home / ancient occupied+periphery | white |
+| 5 | beltway ring, or same-Ancient chain | blue or green |
+
+So core–frontier lanes are **black**. Same-Ancient **green** applies only when both
+endpoints are in the beltway tier (typical ring–ring segments); if either end is
+home-tier (e.g. periphery), the lane paints **white**.
+
+## Locked frontier shades (escalating red)
+
+- Locked (non-wall) frontier stars are split into **4 darkness tiers** L0→L3
+  (light pink-red → deep red).
+- **L0 (lightest):** irregular clusters of about **10–20** stars.
+- **L1–L3:** irregular clusters of about **30–60** stars (L3 also absorbs scraps).
+- Every **home cluster** neighbors at least one **L0** pocket and one **L1**
+  pocket (adjacent in the locked field).
+- Lane paint among frontier uses the **darker** endpoint’s shade.
+
+## Locked walls (grey)
+
+- Placed in **locked frontier** only, after beltways are laid (walls never
+  override beltway / home / ancient / core stars).
+- Shape: about **2–3 stars wide** and **10–20 stars long**.
+- Gaps of normal locked (red) stars:
+  - length **> 10**: may include a gap;
+  - length **> 15**: always has a gap.
+- If a **beltway cuts through the middle 50%** of a wall, that counts as the
+  wall’s gap. Short walls may still be cut by a beltway without needing a gap.
+- Viewer: wall stars and wall-touching lanes draw **grey**.
+
+## Outer grey rim + treasures
+
+- Beyond the play disk: a **very low-density** grey perimeter, generally
+  **2–4 stars wide**, that widens the overall galaxy.
+- Rim stars are grey (same visual as walls) and sit outside play-disk
+  groupings / home / ancient / frontier assignment.
+- **10 gold treasure** stars are chosen at random from rim greys that
+  **do not border any non-grey** star (interior to the grey band).
+
+## Nomads
+
+- Do not affect map generation for now.
+- Flavor: entities that can travel the beltway from the start.
+
+## Ancients
+
+- Four Ancients; viewer colors: gold / purple / green / orange.
+- Galaxy divided into **12 slices**: each Ancient owns 2 consecutive slices,
+  with **1 empty separator on each side** between neighboring Ancients
+  (pattern `AA E BB E CC E DD E` around the disk).
+- **Gap groupings** form a center→rim corridor in each empty separator so
+  Ancient territories stay separated.
+- Ancient clusters: **~6 per Ancient**, placed by farthest-point sampling across
+  available stars in that Ancient’s AA (so they spread in angle and radius even
+  when there are fewer ~60-star groupings than clusters). Leftover stars stay
+  locked frontier.
+- Each Ancient cluster (graph-neighborhood shape):
+  - **1 center occupied** star (required to link to all other occupied in the
+    cluster).
+  - All stars **immediately connected** (geometric 1-hop) to the center are
+    also **occupied**.
+  - Stars that connect to the occupied set but are not occupied themselves are
+    **unoccupied periphery** (home/white shell color).
+- Occupied stars: white shell + Ancient-colored nucleus (~75% radius).
+- All stars drawn semitransparent so nested color reads clearly.
+- Intra-Ancient-cluster lanes (occupied + periphery) use the same unlock tier as
+  home clusters (traversable at start).
+- Beltway **attachment** peri hooks the cluster with **≥1** lane into the
+  occupied pocket (adjacent to at least one occupied star). It does **not**
+  spoke to every occupied world; the center need not link directly to that
+  attachment.
+- Beltway build order:
+  1. **Green first:** retint chains of existing stars between each Ancient’s
+     cluster attachments inside its AA slices (spanning tree). Does **not**
+     invent new forced lanes — ordinary adjacency carries green travel.
+  2. **Blue after:** retint chains of existing stars that **bridge** neighboring
+     Ancient green nets (through empty separators; HOME may become blue). Blue
+     does **not** need a parallel full circle — green + blue together must form
+     **at least one complete ring**. Stray blue tendrils (e.g. home spurs) are
+     fine. Short adjacency-threshold stitches may close remaining bridge gaps.
+- Lane coloring uses **star roles** (not only pre-tagged edges):
+  - **Counts as green:** occupied Ancient cores, attachment periphery stars that
+    link a cluster to the network, and stars on the intra-Ancient green chains
+    (so cluster-to-cluster paths are green↔green).
+  - **Counts as blue:** other beltway (RING) stars (neighbor tendrils / separators).
+  - Lane paint: green↔green → **green**; blue↔green or blue↔blue → **blue**.
+  - Black / red / white home rules still win when those endpoint types apply.
+
+## Galactic core — black
+
+- Fill the middle of the galaxy with black stars.
+- No other types (home, ancient, frontier, beltway) sit in the core.
+- Ordinary outer lanes may not cut through the core; core stars still connect
+  among themselves.
+- **Core rim spokes (black):** 8–12 lanes from the core to systems just outside
+  it:
+  1. Place **8** at random with **≤2 per ⅛ of the perimeter**.
+  2. While any angular coverage gap is **> ¼ of the perimeter**, randomly add
+     **1–2** more spokes into large gaps (cap **12** total).
+
+## Viewer colors (current)
+
+| Role | Color |
+|------|--------|
+| Home / ancient periphery / home-tier lanes | white |
+| Beltway / ring (blue-counting endpoints) | blue |
+| Green-counting ↔ green-counting lanes | green |
+| Locked frontier L0→L3 / red-tier lanes | light→dark red (`#f4b4b4`…`#6e1414`); stars **75%** size |
+| Locked walls / outer rim / wall-tier lanes | grey (`#8b8f98`); stars **75%** size |
+| Treasure (rim) / treasure-tier lanes | gold (`#e6c35c`); slightly larger |
+| Galactic core / black-tier lanes | black; stars **75%** size; lanes **faint** |
+| Ancient occupied nuclei | gold / purple / green / orange |
+
+## How we work
+
+- **You:** jot freeform notes in `instructions.txt`.
+- **Agent:** on `update`, read `instructions.txt`, merge into this file, then
+  implement against this spec (and `starmap.py`). Prefer `--redraw` when only
+  colors/viz change; `--reclassify` when tiers/lanes change; `--regen` only when
+  position generation changes.
