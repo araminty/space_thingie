@@ -1,8 +1,16 @@
 extends Node3D
 ## Solar-system view: stars, orbits, planets, asteroid fields, hyperlane ovals,
-## and planet zoom-inset flags (hockey-stick leaders).
+## planet/fleet zoom-inset flags (hockey-stick leaders), and tiny ship meshes.
 
 const MU_SOLAR := 0.00029591220828559115  # AU^3 / day^2
+const SHIP_SCENE := preload("res://scenes/ships/basic_spaceship.tscn")
+## Ship mesh is ~1 unit long; at system scale it must be microscopic.
+const SHIP_WORLD_SCALE := 0.00085
+## Edge-to-edge (diameter) crossing time at fleet cruise speed.
+const FLEET_CROSSING_DAYS := 20.0
+const FLEET_ARRIVE_EPS_AU := 0.002
+## Pursue/follow holds this far from the target (cruise dest = standoff point).
+const FOLLOW_STANDOFF_AU := 0.02
 
 @onready var _bodies: Node3D = $Bodies
 @onready var _camera_rig: Node3D = $"../OrbitCamera"
@@ -25,26 +33,42 @@ var _pickables: Array = []
 var _flags: Array = []
 var _panel_open := false
 var _panel_meta: Dictionary = {}
-var _panel_is_planet := false
+## "planet" | "asteroid" | "fleet"
+var _panel_mode := ""
 ## Planet orbiters: {mi, a, phase0, inc, period, pick_i, flag_i, meta}
 var _planet_orbiters: Array = []
+## Fleet orbiters: {root, a, phase0, inc, period, host, pick_i, flag_i, meta,
+##   ordered, destination, dest_marker, hostile, stationary, engaged, orbiting,
+##   pursue_fleet_id}
+var _fleet_orbiters: Array = []
 ## Field orbiters: {mmi, template, period, inc, host, pick_i}
 var _field_orbiters: Array = []
 ## Host star positions in Godot space (XZ disk).
 var _host_positions: Array = []
 var _host_mus: Array = []
+## Max radial extent of the current system (AU); diameter = 2× this.
+var _system_edge_au: float = 36.0
+var _fleet_speed_au_per_day: float = 2.0 * 36.0 / FLEET_CROSSING_DAYS
+var _selected_fleet_i: int = -1
+## Hyperlane portals: {center, radius, target_star, target_label}
+var _hyperlane_portals: Array = []
 
 
 func _ready() -> void:
 	visible = false
 	if _back:
+		_back.focus_mode = Control.FOCUS_NONE
 		_back.pressed.connect(_on_back)
 	if _panel_close:
+		_panel_close.focus_mode = Control.FOCUS_NONE
 		_panel_close.pressed.connect(close_panel)
 	_close_panel_ui()
 	GameState.entered_system.connect(_on_enter)
 	GameState.returned_to_galaxy.connect(_on_leave)
 	GameState.day_changed.connect(_on_day_changed)
+	GameState.fleets_changed.connect(_on_fleets_changed)
+	GameState.battles_changed.connect(_on_battles_changed)
+	GameState.fleet_selection_changed.connect(_on_fleet_selection_changed)
 	_data.load_all()
 
 
@@ -56,9 +80,27 @@ func _on_enter(star_id: int) -> void:
 
 func _on_leave() -> void:
 	visible = false
-	close_panel()
+	# Keep GameState.selected_fleet_id across galaxy ↔ system switches.
+	_hide_panel_keep_selection()
 	_clear_bodies()
 	_star_id = -1
+	_selected_fleet_i = -1
+
+
+func _on_fleet_selection_changed(fleet_id: String) -> void:
+	## Sync panel when selection changes while this system is open (e.g. arrivals).
+	if not visible or not is_visible_in_tree() or _star_id < 0:
+		return
+	if fleet_id.is_empty():
+		if _panel_mode == "fleet":
+			_hide_panel_keep_selection()
+		return
+	var i := _fleet_index_by_id(fleet_id)
+	if i < 0:
+		return
+	if _selected_fleet_i == i and _panel_mode == "fleet" and _panel_open:
+		return
+	_open_fleet_panel(_fleet_orbiters[i].meta)
 
 
 func _on_back() -> void:
@@ -68,11 +110,19 @@ func _on_back() -> void:
 func _on_day_changed(_day: float) -> void:
 	if visible and is_visible_in_tree():
 		_apply_orbits()
+		_sync_fleets_from_state()
+		# Fresh Kepler poses (GameState already ran contact; catch same-tick joins).
+		GameState.try_join_proximity_battles(_star_id)
+		GameState.try_start_proximity_battles(_star_id)
+		_refresh_battle_hud()
 		if _panel_open and not _panel_meta.is_empty():
-			if _panel_is_planet:
-				_refresh_planet_stats(_panel_meta)
-			else:
-				_refresh_asteroid_stats(_panel_meta)
+			match _panel_mode:
+				"planet":
+					_refresh_planet_stats(_panel_meta)
+				"asteroid":
+					_refresh_asteroid_stats(_panel_meta)
+				"fleet":
+					_refresh_fleet_stats(_panel_meta)
 
 
 func _process(_delta: float) -> void:
@@ -81,16 +131,36 @@ func _process(_delta: float) -> void:
 	_update_flag_positions()
 
 
+func _input(event: InputEvent) -> void:
+	## RMB: pursue if on another fleet marker; else fixed disk dest (consumes orbit RMB).
+	if not visible or not is_visible_in_tree():
+		return
+	if _panel_mode != "fleet" or _selected_fleet_i < 0:
+		return
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			if _try_rmb_fleet_order(mb.position):
+				get_viewport().set_input_as_handled()
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if not visible:
 		return
-	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
-		if _panel_open:
-			close_panel()
-		else:
-			GameState.return_to_galaxy()
-		get_viewport().set_input_as_handled()
-		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		match event.keycode:
+			KEY_ESCAPE:
+				if _panel_open:
+					close_panel()
+				else:
+					GameState.return_to_galaxy()
+				get_viewport().set_input_as_handled()
+				return
+			KEY_TAB:
+				# Always leave system view (even if a panel is open).
+				GameState.return_to_galaxy()
+				get_viewport().set_input_as_handled()
+				return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
@@ -98,14 +168,66 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 
 
+func _on_fleets_changed() -> void:
+	## Spawn arrivals; despawn wiped/left fleets; refresh ship meshes after rounds.
+	if not visible or not is_visible_in_tree() or _star_id < 0:
+		return
+	_despawn_missing_live_fleets()
+	_spawn_missing_live_fleets()
+	_sync_fleet_visuals_from_state()
+	_refresh_battle_hud()
+	_restore_selected_fleet_panel()
+
+
+func _on_battles_changed() -> void:
+	if not visible or not is_visible_in_tree() or _star_id < 0:
+		return
+	_sync_fleet_visuals_from_state()
+	_freeze_engaged_destinations()
+	_refresh_battle_hud()
+	if _panel_open and _panel_mode == "fleet" and not _panel_meta.is_empty():
+		_refresh_fleet_stats(_panel_meta)
+
+
+func _freeze_engaged_destinations() -> void:
+	## Clear ordered motion / pursue / hide dest rings while a fleet is engaged.
+	## Leaving orbit (orbiting=false) so post-battle survivors stay at contact pose.
+	for i in _fleet_orbiters.size():
+		var orb: Dictionary = _fleet_orbiters[i]
+		var fid := String(orb.get("fleet_id", ""))
+		var engaged := GameState.is_fleet_engaged(fid) or bool(orb.get("engaged", false))
+		orb["engaged"] = engaged
+		var meta: Dictionary = orb.get("meta", {})
+		meta["engaged"] = engaged
+		if engaged:
+			orb["ordered"] = false
+			orb["orbiting"] = false
+			orb["pursue_fleet_id"] = ""
+			meta["ordered"] = false
+			meta["orbiting"] = false
+			meta["pursue_fleet_id"] = ""
+			var marker: MeshInstance3D = orb.get("dest_marker") as MeshInstance3D
+			if is_instance_valid(marker):
+				marker.visible = false
+			if GameState.has_fleet(fid):
+				GameState.fleets[fid]["ordered"] = false
+				GameState.fleets[fid]["orbiting"] = false
+				GameState.fleets[fid]["pursue_fleet_id"] = ""
+				GameState.fleets[fid]["route"] = []
+		orb["meta"] = meta
+		_fleet_orbiters[i] = orb
+
 func _clear_bodies() -> void:
 	for c in _bodies.get_children():
 		c.queue_free()
 	_pickables.clear()
 	_planet_orbiters.clear()
+	_fleet_orbiters.clear()
 	_field_orbiters.clear()
 	_host_positions.clear()
 	_host_mus.clear()
+	_hyperlane_portals.clear()
+	_selected_fleet_i = -1
 	for f in _flags:
 		if is_instance_valid(f):
 			f.queue_free()
@@ -116,7 +238,7 @@ func _clear_bodies() -> void:
 
 func _build(star_id: int) -> void:
 	_clear_bodies()
-	close_panel()
+	_hide_panel_keep_selection()
 	var content: Dictionary = _data.get_system(star_id)
 	if content.is_empty():
 		if _title:
@@ -129,6 +251,7 @@ func _build(star_id: int) -> void:
 	var mu := float(content.get("mu", MU_SOLAR))
 	var planets: Array = content.get("planets", [])
 	var fields: Array = content.get("asteroid_fields", [])
+	var fleets: Array = content.get("fleets", [])
 	var hyperlanes: Array = content.get("hyperlanes", [])
 	var stars_doc: Array = content.get("stars", [])
 
@@ -172,9 +295,63 @@ func _build(star_id: int) -> void:
 		extent = maxf(extent, sqrt(hx * hx + hy * hy) + 1.0)
 		_add_hyperlane(hl)
 
+	var ring_r := float(content.get("hyperlane_ring_radius", 0.0))
+	extent = maxf(extent, ring_r)
+	_system_edge_au = maxf(extent, 1.0)
+	_fleet_speed_au_per_day = (2.0 * _system_edge_au) / FLEET_CROSSING_DAYS
+
+	# Seed content fleets into GameState once, then spawn whatever is live here.
+	_seed_content_fleets(fleets, mu)
+	_spawn_missing_live_fleets()
+
 	_apply_orbits()
-	if _camera_rig and _camera_rig.has_method("set_focus"):
-		_camera_rig.call_deferred("set_focus", Vector3.ZERO, extent * 2.2)
+	_set_initial_camera(content, extent)
+	_restore_selected_fleet_panel()
+
+
+func _restore_selected_fleet_panel() -> void:
+	## Re-open panel for GameState.selected_fleet_id if that fleet is here.
+	var sel := GameState.selected_fleet_id
+	if sel.is_empty():
+		return
+	var i := _fleet_index_by_id(sel)
+	if i < 0:
+		return
+	if _selected_fleet_i == i and _panel_mode == "fleet" and _panel_open:
+		return
+	_open_fleet_panel(_fleet_orbiters[i].meta)
+
+
+func _set_initial_camera(content: Dictionary, extent: float) -> void:
+	## Angled view zoomed so a Jupiter-scale orbit (~inner system) fills the frame.
+	if _camera_rig == null:
+		return
+	var view_r := _initial_view_radius_au(content, extent)
+	if _camera_rig.has_method("set_view"):
+		_camera_rig.call_deferred("set_view", Vector3.ZERO, view_r, -50.0, 38.0)
+	elif _camera_rig.has_method("set_focus"):
+		_camera_rig.pitch_deg = 38.0
+		_camera_rig.yaw_deg = -50.0
+		_camera_rig.call_deferred("set_focus", Vector3.ZERO, view_r)
+
+
+func _initial_view_radius_au(content: Dictionary, extent: float) -> float:
+	## Prefer Jupiter's orbit; else outermost gas giant; else a slice of system extent.
+	var jupiter_a := -1.0
+	var giant_a := -1.0
+	for p in content.get("planets", []):
+		var a := float(p.get("orbital_radius", 0.0))
+		if a <= 0.0:
+			continue
+		if String(p.get("name", "")) == "Jupiter":
+			jupiter_a = a
+		if String(p.get("kind", "")) == "gas_giant":
+			giant_a = maxf(giant_a, a)
+	if jupiter_a > 0.0:
+		return jupiter_a * 1.12
+	if giant_a > 0.0:
+		return giant_a * 1.12
+	return clampf(extent * 0.28, 3.0, maxf(extent, 3.0))
 
 
 func _setup_hosts(stars_doc: Array, mult: int, fallback_mu: float) -> void:
@@ -286,7 +463,7 @@ func _add_planet(p: Dictionary, mu: float, host: Vector3) -> void:
 	var phase0 := float(p.get("phase0", 0.0))
 	var inc := float(p.get("inclination", 0.08))
 	var kind := String(p.get("kind", "goldilocks"))
-	var name := String(p.get("name", "World"))
+	var body_name := String(p.get("name", "World"))
 	var orbit_mode := String(p.get("orbit_mode", "kepler"))
 	var half_period := float(p.get("horseshoe_half_period_days", 30.0))
 	var arc_frac := float(p.get("horseshoe_arc_frac", (360.0 - 50.0) / 360.0))
@@ -322,7 +499,7 @@ func _add_planet(p: Dictionary, mu: float, host: Vector3) -> void:
 	omat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	omat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	orbit_mi.material_override = omat
-	orbit_mi.name = "%s_orbit" % name
+	orbit_mi.name = "%s_orbit" % body_name
 	_bodies.add_child(orbit_mi)
 
 	var pos := host + _planet_pos_at_day_ex(
@@ -344,11 +521,11 @@ func _add_planet(p: Dictionary, mu: float, host: Vector3) -> void:
 	var pmi := MeshInstance3D.new()
 	pmi.mesh = sphere
 	pmi.position = pos
-	pmi.name = name
+	pmi.name = body_name
 	_bodies.add_child(pmi)
 
 	var meta := {
-		"name": name,
+		"name": body_name,
 		"kind": kind,
 		"a": a,
 		"period": period,
@@ -398,9 +575,774 @@ func _spawn_flag(meta: Dictionary, world: Vector3, accent: Color, ca: Color, cb:
 	_flags_root.add_child(flag)
 	flag.setup(meta, world, accent, ca, cb)
 	flag.visible = false
-	flag.opened.connect(func() -> void: _open_planet_panel(meta))
+	var marker := String(meta.get("marker", "planet"))
+	if marker == "fleet":
+		flag.opened.connect(func() -> void: _open_fleet_panel(meta))
+	else:
+		flag.opened.connect(func() -> void: _open_planet_panel(meta))
 	_flags.append(flag)
 
+
+func _fleet_colors(faction: String = "") -> Dictionary:
+	## Subtle faction tint; default keeps the original cyan/slate look.
+	if faction == "Compact":
+		return {
+			"tip": Color(0.45, 0.88, 0.78),
+			"a": Color(0.62, 0.88, 0.82),
+			"b": Color(0.08, 0.20, 0.22),
+		}
+	if faction == "March":
+		return {
+			"tip": Color(0.95, 0.70, 0.45),
+			"a": Color(0.92, 0.78, 0.62),
+			"b": Color(0.22, 0.14, 0.10),
+		}
+	if faction == "Choir":
+		return {
+			"tip": Color(0.72, 0.45, 0.95),
+			"a": Color(0.55, 0.85, 0.55),
+			"b": Color(0.18, 0.08, 0.22),
+		}
+	return {
+		"tip": Color(0.55, 0.85, 0.95),
+		"a": Color(0.72, 0.82, 0.92),
+		"b": Color(0.12, 0.18, 0.28),
+	}
+
+
+func _fleet_id_for_content(star_id: int, fleet_name: String) -> String:
+	return "%d:%s" % [star_id, fleet_name]
+
+
+func _seed_content_fleets(fleets_doc: Array, mu: float) -> void:
+	for fl in fleets_doc:
+		var fd: Dictionary = fl
+		var fname := String(fd.get("name", "Fleet"))
+		var fid := _fleet_id_for_content(_star_id, fname)
+		if GameState.has_fleet(fid):
+			continue
+		var host_i := int(fd.get("host_star", 0))
+		var host := Vector3.ZERO if host_i < 0 else _host_of(host_i)
+		var hostile := bool(fd.get("hostile", false))
+		var stationary := bool(fd.get("stationary", false))
+		var a := float(fd.get("orbital_radius", 1.0))
+		var phase0 := float(fd.get("phase0", 0.0))
+		var inc := float(fd.get("inclination", 0.02))
+		var local_mu := mu if host_i < 0 else _mu_of(host_i)
+		var period := 0.0
+		if local_mu > 0.0 and not stationary:
+			period = TAU * sqrt((a * a * a) / local_mu)
+		var pos: Vector3
+		if stationary and fd.has("position"):
+			var p = fd.get("position", [0.0, 0.0, 0.0])
+			pos = host + Vector3(float(p[0]), 0.0, float(p[2]) if p.size() > 2 else 0.0)
+		else:
+			pos = host + _planet_pos_at_day(a, phase0, inc, period, GameState.day)
+		pos.y = 0.0
+		var ship_names: Array = []
+		for s in fd.get("ships", []):
+			ship_names.append(String(s.get("name", "Ship")))
+		GameState.register_fleet({
+			"id": fid,
+			"name": fname,
+			"ships": ship_names,
+			"ship_templates": fd.get("ships", []),
+			"faction": String(fd.get("faction", "")),
+			"role": String(fd.get("role", "")),
+			"hostile": hostile,
+			"stationary": stationary,
+			# Kepler only until ordered / engaged; hostiles never orbit.
+			"orbiting": not hostile and not stationary,
+			"engaged": false,
+			"battle_id": "",
+			"ordered": false,
+			"pursue_fleet_id": "",
+			"status": "in_system",
+			"system_id": _star_id,
+			"pos_x": pos.x,
+			"pos_z": pos.z,
+			"a": a,
+			"phase0": phase0,
+			"inclination": inc,
+			"period": period,
+			"host_star": host_i,
+			"needs_placement": false,
+			"last_hyperlane_enter_day": GameState.HYPERLANE_ENTER_READY_DAY,
+		})
+
+
+func _spawn_missing_live_fleets() -> void:
+	var present: Dictionary = {}
+	for orb in _fleet_orbiters:
+		present[String(orb.get("fleet_id", ""))] = true
+	for f in GameState.fleets_in_system(_star_id):
+		var fid := String(f.get("id", ""))
+		if fid.is_empty() or present.has(fid):
+			continue
+		_spawn_fleet_record(f)
+
+
+func _despawn_missing_live_fleets() -> void:
+	## Remove visuals for fleets wiped in battle or that left the system.
+	var live: Dictionary = {}
+	for f in GameState.fleets_in_system(_star_id):
+		live[String(f.get("id", ""))] = true
+	var i := _fleet_orbiters.size() - 1
+	while i >= 0:
+		var fid := String(_fleet_orbiters[i].get("fleet_id", ""))
+		if not live.has(fid):
+			_despawn_fleet_at(i)
+		i -= 1
+
+
+func _sync_fleet_visuals_from_state() -> void:
+	## Rebuild ship meshes / meta when battle rounds change ship lists.
+	## Also mirror ordered / pursue / orbiting after hyperspace cancels.
+	for i in _fleet_orbiters.size():
+		var orb: Dictionary = _fleet_orbiters[i]
+		var fid := String(orb.get("fleet_id", ""))
+		if fid.is_empty() or not GameState.has_fleet(fid):
+			continue
+		var f: Dictionary = GameState.fleets[fid]
+		var templates: Array = f.get("ship_templates", [])
+		var names: Array = f.get("ships", [])
+		var meta: Dictionary = orb.get("meta", {})
+		meta["ship_templates"] = templates
+		meta["ships"] = names
+		meta["ship_count"] = names.size()
+		meta["engaged"] = bool(f.get("engaged", false))
+		meta["orbiting"] = bool(f.get("orbiting", meta.get("orbiting", true)))
+		meta["ordered"] = bool(f.get("ordered", false))
+		meta["pursue_fleet_id"] = String(f.get("pursue_fleet_id", ""))
+		meta["dest_x"] = float(f.get("dest_x", meta.get("dest_x", 0.0)))
+		meta["dest_z"] = float(f.get("dest_z", meta.get("dest_z", 0.0)))
+		orb["meta"] = meta
+		orb["engaged"] = bool(f.get("engaged", false))
+		orb["hostile"] = bool(f.get("hostile", false))
+		orb["stationary"] = bool(f.get("stationary", false))
+		orb["orbiting"] = bool(f.get("orbiting", orb.get("orbiting", true)))
+		orb["ordered"] = bool(f.get("ordered", false))
+		orb["pursue_fleet_id"] = String(f.get("pursue_fleet_id", ""))
+		orb["destination"] = Vector3(
+			float(f.get("dest_x", 0.0)), 0.0, float(f.get("dest_z", 0.0))
+		)
+		var marker: MeshInstance3D = orb.get("dest_marker") as MeshInstance3D
+		if not bool(orb["ordered"]) or bool(orb["engaged"]):
+			if is_instance_valid(marker):
+				marker.visible = false
+		elif is_instance_valid(marker):
+			marker.position = orb["destination"]
+			marker.visible = true
+		_rebuild_fleet_ships(orb, templates)
+		_fleet_orbiters[i] = orb
+
+
+func _rebuild_fleet_ships(orb: Dictionary, ships_doc: Array) -> void:
+	var root: Node3D = orb.get("root") as Node3D
+	if not is_instance_valid(root):
+		return
+	var old := root.get_children()
+	for c in old:
+		root.remove_child(c)
+		c.free()
+	for s in ships_doc:
+		var sd: Dictionary = s
+		var ship := SHIP_SCENE.instantiate() as Node3D
+		ship.name = String(sd.get("name", "Ship"))
+		var size_mul := float(sd.get("size_scale", 1.0))
+		ship.scale = Vector3.ONE * SHIP_WORLD_SCALE * size_mul
+		var off = sd.get("offset", [0.0, 0.0, 0.0])
+		var ox := float(off[0]) if typeof(off) == TYPE_ARRAY and off.size() > 0 else 0.0
+		var oy := float(off[1]) if typeof(off) == TYPE_ARRAY and off.size() > 1 else 0.0
+		var oz := float(off[2]) if typeof(off) == TYPE_ARRAY and off.size() > 2 else 0.0
+		ship.position = Vector3(ox, oy, oz)
+		root.add_child(ship)
+
+
+func _spawn_fleet_record(f: Dictionary) -> void:
+	var host_i := int(f.get("host_star", 0))
+	var host := Vector3.ZERO
+	if host_i >= 0 and host_i < _host_positions.size():
+		host = _host_of(host_i)
+	var pos := Vector3(float(f.get("pos_x", 0.0)), 0.0, float(f.get("pos_z", 0.0)))
+	if bool(f.get("needs_placement", false)):
+		pos = _arrival_position(int(f.get("arrived_from", -1)))
+		f["pos_x"] = pos.x
+		f["pos_z"] = pos.z
+		f["needs_placement"] = false
+		GameState.update_fleet_system_pose(String(f.get("id", "")), _star_id, pos)
+	_spawn_fleet_visual(f, host)
+
+
+func _arrival_position(arrived_from: int) -> Vector3:
+	## Arrive inward of the return portal (closer to system center than the oval).
+	for p in _hyperlane_portals:
+		if int(p.get("target_star", -1)) == arrived_from:
+			var c: Vector3 = p.center
+			return c * GameState.ARRIVAL_INSET
+	if not _hyperlane_portals.is_empty():
+		var c2: Vector3 = _hyperlane_portals[0].center
+		return c2 * GameState.ARRIVAL_INSET
+	return Vector3(_system_edge_au * 0.5, 0.0, 0.0)
+
+
+func _spawn_fleet_visual(f: Dictionary, host: Vector3) -> void:
+	var fleet_name := String(f.get("name", "Fleet"))
+	var fleet_id := String(f.get("id", fleet_name))
+	var a := float(f.get("a", 1.0))
+	var phase0 := float(f.get("phase0", 0.0))
+	var inc := float(f.get("inclination", 0.02))
+	var period := float(f.get("period", 0.0))
+	var pos := Vector3(float(f.get("pos_x", 0.0)), 0.0, float(f.get("pos_z", 0.0)))
+	pos.y = 0.0
+	var faction := String(f.get("faction", ""))
+	var hostile := bool(f.get("hostile", false))
+	var stationary := bool(f.get("stationary", false))
+	var engaged := bool(f.get("engaged", false))
+	var orbiting := bool(f.get("orbiting", not hostile and not stationary))
+	var colors := _fleet_colors(faction)
+	var tip: Color = colors.tip
+
+	var root := Node3D.new()
+	root.name = fleet_name
+	root.position = pos
+	_bodies.add_child(root)
+
+	var ships_doc: Array = f.get("ship_templates", [])
+	var ship_names: Array = f.get("ships", [])
+	if ships_doc.is_empty() and typeof(ship_names) == TYPE_ARRAY:
+		for sn in ship_names:
+			ships_doc.append({"name": String(sn), "template": "basic_spaceship", "offset": [0.0, 0.0, 0.0]})
+	if ships_doc.is_empty():
+		ships_doc = [
+			{"name": "Ship-1", "offset": [0.0, 0.0, 0.0]},
+			{"name": "Ship-2", "offset": [-0.0035, 0.0, 0.0035]},
+			{"name": "Ship-3", "offset": [0.0035, 0.0, 0.0035]},
+		]
+	var resolved_names: Array = []
+	for s in ships_doc:
+		var sd: Dictionary = s
+		var ship_name := String(sd.get("name", "Ship"))
+		resolved_names.append(ship_name)
+		var ship := SHIP_SCENE.instantiate() as Node3D
+		ship.name = ship_name
+		var size_mul := float(sd.get("size_scale", 1.0))
+		ship.scale = Vector3.ONE * SHIP_WORLD_SCALE * size_mul
+		var off = sd.get("offset", [0.0, 0.0, 0.0])
+		var ox := float(off[0]) if typeof(off) == TYPE_ARRAY and off.size() > 0 else 0.0
+		var oy := float(off[1]) if typeof(off) == TYPE_ARRAY and off.size() > 1 else 0.0
+		var oz := float(off[2]) if typeof(off) == TYPE_ARRAY and off.size() > 2 else 0.0
+		ship.position = Vector3(ox, oy, oz)
+		root.add_child(ship)
+
+	var fleet_i := _fleet_orbiters.size()
+	var meta := {
+		"name": fleet_name,
+		"marker": "fleet",
+		"kind": "fleet",
+		"fleet_i": fleet_i,
+		"fleet_id": fleet_id,
+		"a": a,
+		"period": period,
+		"phase0": phase0,
+		"host_star": int(f.get("host_star", 0)),
+		"ship_count": resolved_names.size(),
+		"ships": resolved_names,
+		"ship_templates": ships_doc,
+		"faction": faction,
+		"role": String(f.get("role", "")),
+		"hostile": hostile,
+		"stationary": stationary,
+		"engaged": engaged,
+		"orbiting": orbiting,
+		"day": int(floor(GameState.day)),
+		"color_a": colors.a,
+		"color_b": colors.b,
+		"accent": tip,
+		"ordered": bool(f.get("ordered", false)),
+		"dest_x": float(f.get("dest_x", 0.0)),
+		"dest_z": float(f.get("dest_z", 0.0)),
+		"pursue_fleet_id": String(f.get("pursue_fleet_id", "")),
+	}
+	# Hostiles are pickable for inspect; movement is blocked separately.
+	var pick_i := _pickables.size()
+	_pickables.append({
+		"kind": "fleet",
+		"center": pos,
+		"radius": 0.12,
+		"meta": meta,
+	})
+	var flag_i := _flags.size()
+	_spawn_flag(meta, pos, tip, colors.a, colors.b)
+	_fleet_orbiters.append({
+		"root": root,
+		"fleet_id": fleet_id,
+		"a": a,
+		"phase0": phase0,
+		"inc": inc,
+		"period": period,
+		"host": host,
+		"pick_i": pick_i,
+		"flag_i": flag_i,
+		"meta": meta,
+		"hostile": hostile,
+		"stationary": stationary,
+		"engaged": engaged,
+		"orbiting": orbiting,
+		"ordered": bool(f.get("ordered", false)),
+		"pursue_fleet_id": String(f.get("pursue_fleet_id", "")),
+		"destination": Vector3(float(f.get("dest_x", 0.0)), 0.0, float(f.get("dest_z", 0.0))),
+		"dest_marker": null,
+	})
+
+func _disk_point_from_screen(screen_pos: Vector2) -> Variant:
+	## Ray ∩ solar disk plane (Y = 0). Returns Vector3 or null.
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return null
+	var from := cam.project_ray_origin(screen_pos)
+	var dir := cam.project_ray_normal(screen_pos)
+	if absf(dir.y) < 1e-8:
+		return null
+	var t := -from.y / dir.y
+	if t < 0.0:
+		return null
+	var p := from + dir * t
+	p.y = 0.0
+	return p
+
+
+func _try_rmb_fleet_order(screen_pos: Vector2) -> bool:
+	## Portal path > pursue another fleet > fixed disk dest. No orders for hostiles.
+	if _selected_fleet_i < 0 or _selected_fleet_i >= _fleet_orbiters.size():
+		return false
+	var orb0: Dictionary = _fleet_orbiters[_selected_fleet_i]
+	if bool(orb0.get("hostile", false)):
+		return false
+	var fid0 := String(orb0.get("fleet_id", ""))
+	if GameState.is_fleet_engaged(fid0) or bool(orb0.get("engaged", false)):
+		return false
+	# Portal / linked-star marker takes pathing priority over pursue / disk dest.
+	var portal := _hyperlane_at_screen(screen_pos)
+	if not portal.is_empty():
+		var dest_star := int(portal.get("target_star", -1))
+		if dest_star >= 0 and GameState.order_fleet_path_to_star(fid0, dest_star):
+			_apply_game_state_order_to_orb(_selected_fleet_i)
+			if _panel_mode == "fleet" and not _panel_meta.is_empty():
+				_refresh_fleet_stats(_panel_meta)
+			return true
+		return false
+	var target_i := _fleet_index_at_screen(screen_pos)
+	if target_i >= 0:
+		# Hit a fleet marker: pursue (not self) and never also set disk dest.
+		if target_i != _selected_fleet_i:
+			_try_issue_pursue(_selected_fleet_i, target_i)
+			if _panel_mode == "fleet" and not _panel_meta.is_empty():
+				_refresh_fleet_stats(_panel_meta)
+		return true
+	return _set_selected_fleet_destination(screen_pos)
+
+
+func _hyperlane_at_screen(screen_pos: Vector2) -> Dictionary:
+	## Nearest hyperlane pickable under the ray (portal oval).
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return {}
+	var from := cam.project_ray_origin(screen_pos)
+	var dir := cam.project_ray_normal(screen_pos)
+	var best: Dictionary = {}
+	var best_score := 1e9
+	for item in _pickables:
+		if String(item.get("kind", "")) != "hyperlane":
+			continue
+		var center: Vector3 = item.center
+		var radius: float = float(item.radius)
+		var w := center - from
+		var proj := w.dot(dir)
+		if proj < 0.0:
+			continue
+		var closest := from + dir * proj
+		var dist := closest.distance_to(center)
+		if dist > radius:
+			continue
+		if dist < best_score:
+			best_score = dist
+			best = item.get("meta", {})
+	return best
+
+
+func _apply_game_state_order_to_orb(fleet_i: int) -> void:
+	## Mirror GameState ordered dest / route onto a live orbiter + dest ring.
+	if fleet_i < 0 or fleet_i >= _fleet_orbiters.size():
+		return
+	var orb: Dictionary = _fleet_orbiters[fleet_i]
+	var fid := String(orb.get("fleet_id", ""))
+	if fid.is_empty() or not GameState.has_fleet(fid):
+		return
+	var f: Dictionary = GameState.fleets[fid]
+	var dest := Vector3(float(f.get("dest_x", 0.0)), 0.0, float(f.get("dest_z", 0.0)))
+	orb["ordered"] = bool(f.get("ordered", false))
+	orb["orbiting"] = bool(f.get("orbiting", false))
+	orb["pursue_fleet_id"] = String(f.get("pursue_fleet_id", ""))
+	orb["destination"] = dest
+	var meta: Dictionary = orb.get("meta", {})
+	meta["ordered"] = orb["ordered"]
+	meta["orbiting"] = orb["orbiting"]
+	meta["pursue_fleet_id"] = orb["pursue_fleet_id"]
+	meta["dest_x"] = dest.x
+	meta["dest_z"] = dest.z
+	orb["meta"] = meta
+	if bool(orb["ordered"]):
+		_ensure_dest_marker(orb, dest)
+	else:
+		var marker: MeshInstance3D = orb.get("dest_marker") as MeshInstance3D
+		if is_instance_valid(marker):
+			marker.visible = false
+	_fleet_orbiters[fleet_i] = orb
+
+
+func _fleet_index_at_screen(screen_pos: Vector2) -> int:
+	## Prefer PlanetFlag frame under cursor, else nearest fleet pickable along the ray.
+	for i in _fleet_orbiters.size():
+		var orb: Dictionary = _fleet_orbiters[i]
+		var flag_i: int = int(orb.get("flag_i", -1))
+		if flag_i < 0 or flag_i >= _flags.size():
+			continue
+		var flag: PlanetFlag = _flags[flag_i] as PlanetFlag
+		if flag != null and is_instance_valid(flag) and flag.hit_test_global(screen_pos):
+			return i
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return -1
+	var from := cam.project_ray_origin(screen_pos)
+	var dir := cam.project_ray_normal(screen_pos)
+	var best_i := -1
+	var best_score := 1e9
+	for i in _pickables.size():
+		var item: Dictionary = _pickables[i]
+		if String(item.get("kind", "")) != "fleet":
+			continue
+		var center: Vector3 = item.center
+		var radius: float = float(item.radius)
+		var w := center - from
+		var proj := w.dot(dir)
+		if proj < 0.0:
+			continue
+		var closest := from + dir * proj
+		var dist := closest.distance_to(center)
+		if dist > radius:
+			continue
+		if dist < best_score:
+			best_score = dist
+			var meta: Dictionary = item.get("meta", {})
+			best_i = int(meta.get("fleet_i", -1))
+	return best_i
+
+
+func _set_selected_fleet_destination(screen_pos: Vector2) -> bool:
+	if _selected_fleet_i < 0 or _selected_fleet_i >= _fleet_orbiters.size():
+		return false
+	var orb0: Dictionary = _fleet_orbiters[_selected_fleet_i]
+	if bool(orb0.get("hostile", false)):
+		return false
+	var fid0 := String(orb0.get("fleet_id", ""))
+	if GameState.is_fleet_engaged(fid0) or bool(orb0.get("engaged", false)):
+		return false
+	var hit = _disk_point_from_screen(screen_pos)
+	if hit == null:
+		return false
+	var dest: Vector3 = hit
+	dest.y = 0.0
+	if not fid0.is_empty():
+		if not GameState.set_fleet_disk_destination(fid0, dest):
+			return false
+	var orb: Dictionary = _fleet_orbiters[_selected_fleet_i]
+	orb["ordered"] = true
+	orb["orbiting"] = false
+	orb["pursue_fleet_id"] = ""  # fixed RMB dest replaces chase
+	orb["destination"] = dest
+	var meta: Dictionary = orb.meta
+	meta["ordered"] = true
+	meta["orbiting"] = false
+	meta["pursue_fleet_id"] = ""
+	meta["dest_x"] = dest.x
+	meta["dest_z"] = dest.z
+	_ensure_dest_marker(orb, dest)
+	_fleet_orbiters[_selected_fleet_i] = orb
+	if _panel_mode == "fleet":
+		_refresh_fleet_stats(meta)
+	return true
+
+
+func _fleet_index_by_id(fleet_id: String) -> int:
+	if fleet_id.is_empty():
+		return -1
+	for i in _fleet_orbiters.size():
+		if String(_fleet_orbiters[i].get("fleet_id", "")) == fleet_id:
+			return i
+	return -1
+
+
+func _try_issue_pursue(pursuer_i: int, target_i: int) -> void:
+	## Friendly movable pursuer → chase target fleet (RMB on marker; selection stays).
+	if pursuer_i < 0 or pursuer_i >= _fleet_orbiters.size():
+		return
+	if target_i < 0 or target_i >= _fleet_orbiters.size():
+		return
+	if pursuer_i == target_i:
+		return
+	var pursuer: Dictionary = _fleet_orbiters[pursuer_i]
+	var target: Dictionary = _fleet_orbiters[target_i]
+	if bool(pursuer.get("hostile", false)) or bool(pursuer.get("stationary", false)):
+		return
+	var pid := String(pursuer.get("fleet_id", ""))
+	var tid := String(target.get("fleet_id", ""))
+	if pid.is_empty() or tid.is_empty():
+		return
+	if GameState.is_fleet_engaged(pid) or bool(pursuer.get("engaged", false)):
+		return
+	if not GameState.set_fleet_pursuit(pid, tid):
+		return
+	var target_pos := Vector3.ZERO
+	var troot: Node3D = target.get("root") as Node3D
+	if is_instance_valid(troot):
+		target_pos = Vector3(troot.position.x, 0.0, troot.position.z)
+	else:
+		target_pos = Vector3(
+			float(GameState.fleets[tid].get("pos_x", 0.0)),
+			0.0,
+			float(GameState.fleets[tid].get("pos_z", 0.0)),
+		)
+	var pursuer_pos := Vector3.ZERO
+	var proot: Node3D = pursuer.get("root") as Node3D
+	if is_instance_valid(proot):
+		pursuer_pos = Vector3(proot.position.x, 0.0, proot.position.z)
+	elif GameState.has_fleet(pid):
+		pursuer_pos = Vector3(
+			float(GameState.fleets[pid].get("pos_x", 0.0)),
+			0.0,
+			float(GameState.fleets[pid].get("pos_z", 0.0)),
+		)
+	var dest := _pursue_standoff_dest(pursuer_pos, target_pos)
+	pursuer["ordered"] = true
+	pursuer["orbiting"] = false
+	pursuer["pursue_fleet_id"] = tid
+	pursuer["destination"] = dest
+	var meta: Dictionary = pursuer.get("meta", {})
+	meta["ordered"] = true
+	meta["orbiting"] = false
+	meta["pursue_fleet_id"] = tid
+	meta["dest_x"] = dest.x
+	meta["dest_z"] = dest.z
+	pursuer["meta"] = meta
+	_ensure_dest_marker(pursuer, dest)
+	_fleet_orbiters[pursuer_i] = pursuer
+
+
+func _pursue_standoff_dest(pursuer_pos: Vector3, target_pos: Vector3) -> Vector3:
+	## Cruise dest on the segment toward target, FOLLOW_STANDOFF_AU short of T.
+	## Already within standoff → hold at pursuer (no jitter toward exact overlap).
+	var p := Vector3(pursuer_pos.x, 0.0, pursuer_pos.z)
+	var t := Vector3(target_pos.x, 0.0, target_pos.z)
+	var to_t := t - p
+	var dist := to_t.length()
+	if dist <= FOLLOW_STANDOFF_AU:
+		return p
+	return t - (to_t / dist) * FOLLOW_STANDOFF_AU
+
+
+func _clear_orb_pursuit(orb: Dictionary) -> void:
+	## Stop chase / ordered travel; leave at current pose (orbiting=false).
+	orb["pursue_fleet_id"] = ""
+	orb["ordered"] = false
+	orb["orbiting"] = false
+	var meta: Dictionary = orb.get("meta", {})
+	meta["pursue_fleet_id"] = ""
+	meta["ordered"] = false
+	meta["orbiting"] = false
+	orb["meta"] = meta
+	var marker: MeshInstance3D = orb.get("dest_marker") as MeshInstance3D
+	if is_instance_valid(marker):
+		marker.visible = false
+	var fid := String(orb.get("fleet_id", ""))
+	if not fid.is_empty() and GameState.has_fleet(fid):
+		GameState.fleets[fid]["pursue_fleet_id"] = ""
+		GameState.fleets[fid]["ordered"] = false
+		GameState.fleets[fid]["orbiting"] = false
+		GameState.fleets[fid]["route"] = []
+
+
+func _ensure_dest_marker(orb: Dictionary, dest: Vector3) -> void:
+	var marker: MeshInstance3D = orb.get("dest_marker") as MeshInstance3D
+	if marker == null or not is_instance_valid(marker):
+		marker = MeshInstance3D.new()
+		marker.name = "FleetDestination"
+		var torus := TorusMesh.new()
+		torus.inner_radius = 0.035
+		torus.outer_radius = 0.055
+		torus.rings = 12
+		torus.ring_segments = 24
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.albedo_color = Color(0.55, 0.85, 0.95, 0.85)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.emission_enabled = true
+		mat.emission = Color(0.35, 0.75, 0.95)
+		mat.emission_energy_multiplier = 1.2
+		marker.mesh = torus
+		marker.material_override = mat
+		# Torus lies in XY by default; rotate flat onto XZ disk.
+		marker.rotation_degrees = Vector3(90, 0, 0)
+		_bodies.add_child(marker)
+		orb["dest_marker"] = marker
+	marker.position = dest
+	marker.visible = true
+
+
+func _sync_fleet_world(orb: Dictionary, pos: Vector3, face_dir: Vector3, write_state: bool = true) -> void:
+	pos.y = 0.0
+	var root: Node3D = orb.root
+	if is_instance_valid(root):
+		root.position = pos
+		if face_dir.length_squared() > 1e-12:
+			var flat := Vector3(face_dir.x, 0.0, face_dir.z)
+			if flat.length_squared() > 1e-12:
+				root.look_at(pos + flat.normalized(), Vector3.UP)
+	var pick_i: int = int(orb.pick_i)
+	if pick_i >= 0 and pick_i < _pickables.size():
+		_pickables[pick_i].center = pos
+		_pickables[pick_i].meta.day = int(floor(GameState.day))
+	var flag_i: int = int(orb.flag_i)
+	if flag_i >= 0 and flag_i < _flags.size() and is_instance_valid(_flags[flag_i]):
+		_flags[flag_i].world_pos = pos
+	if write_state:
+		var fid := String(orb.get("fleet_id", ""))
+		if not fid.is_empty():
+			GameState.update_fleet_system_pose(fid, _star_id, pos)
+
+
+func _nearest_hyperlane_portal(pos: Vector3) -> Dictionary:
+	var best: Dictionary = {}
+	var best_d := 1e9
+	for p in _hyperlane_portals:
+		var c: Vector3 = p.center
+		var r := float(p.get("radius", 0.5))
+		var d := Vector3(pos.x, 0.0, pos.z).distance_to(Vector3(c.x, 0.0, c.z))
+		if d <= r and d < best_d:
+			best_d = d
+			best = p
+	return best
+
+
+func _despawn_fleet_at(index: int, keep_selection: bool = false) -> void:
+	if index < 0 or index >= _fleet_orbiters.size():
+		return
+	var orb: Dictionary = _fleet_orbiters[index]
+	var root: Node3D = orb.get("root") as Node3D
+	if is_instance_valid(root):
+		root.queue_free()
+	var marker: MeshInstance3D = orb.get("dest_marker") as MeshInstance3D
+	if is_instance_valid(marker):
+		marker.queue_free()
+	var flag_i: int = int(orb.get("flag_i", -1))
+	if flag_i >= 0 and flag_i < _flags.size() and is_instance_valid(_flags[flag_i]):
+		_flags[flag_i].queue_free()
+		_flags[flag_i] = null
+	var pick_i: int = int(orb.get("pick_i", -1))
+	if pick_i >= 0 and pick_i < _pickables.size():
+		_pickables[pick_i] = {
+			"kind": "gone",
+			"center": Vector3(1e9, 1e9, 1e9),
+			"radius": 0.0,
+			"meta": {},
+		}
+	if _selected_fleet_i == index:
+		_selected_fleet_i = -1
+		if _panel_mode == "fleet":
+			if keep_selection:
+				_hide_panel_keep_selection()
+			else:
+				close_panel()
+	elif _selected_fleet_i > index:
+		_selected_fleet_i -= 1
+	_fleet_orbiters.remove_at(index)
+	# Refresh fleet_i indices on remaining metas.
+	for i in _fleet_orbiters.size():
+		var o: Dictionary = _fleet_orbiters[i]
+		var m: Dictionary = o.get("meta", {})
+		m["fleet_i"] = i
+
+
+func _sync_fleets_from_state() -> void:
+	## Mirror GameState poses / orders onto visuals. No local integration —
+	## GameState owns in-system cruise + portal entry for all systems.
+	var i := _fleet_orbiters.size() - 1
+	while i >= 0:
+		var orb: Dictionary = _fleet_orbiters[i]
+		var fid := String(orb.get("fleet_id", ""))
+		if fid.is_empty() or not GameState.has_fleet(fid):
+			_despawn_fleet_at(i, true)
+			i -= 1
+			continue
+		var f: Dictionary = GameState.fleets[fid]
+		if String(f.get("status", "")) != "in_system" or int(f.get("system_id", -1)) != _star_id:
+			_despawn_fleet_at(i, true)
+			i -= 1
+			continue
+		orb["ordered"] = bool(f.get("ordered", false))
+		orb["orbiting"] = bool(f.get("orbiting", orb.get("orbiting", true)))
+		orb["pursue_fleet_id"] = String(f.get("pursue_fleet_id", ""))
+		orb["engaged"] = bool(f.get("engaged", false))
+		orb["destination"] = Vector3(
+			float(f.get("dest_x", 0.0)), 0.0, float(f.get("dest_z", 0.0))
+		)
+		var meta: Dictionary = orb.get("meta", {})
+		meta["ordered"] = orb["ordered"]
+		meta["orbiting"] = orb["orbiting"]
+		meta["pursue_fleet_id"] = orb["pursue_fleet_id"]
+		meta["engaged"] = orb["engaged"]
+		meta["dest_x"] = orb["destination"].x
+		meta["dest_z"] = orb["destination"].z
+		orb["meta"] = meta
+		var marker: MeshInstance3D = orb.get("dest_marker") as MeshInstance3D
+		if bool(orb["ordered"]) and not bool(orb["engaged"]):
+			_ensure_dest_marker(orb, orb["destination"])
+		elif is_instance_valid(marker):
+			marker.visible = false
+		# Ordered / pursue / engaged / non-orbiting: pose from GameState.
+		# Kepler orbiters are positioned in _apply_orbits.
+		var still_orbiting := bool(orb["orbiting"]) and not bool(orb["ordered"])
+		if (
+			bool(orb["ordered"])
+			or bool(orb.get("stationary", false))
+			or bool(orb.get("hostile", false))
+			or bool(orb["engaged"])
+			or not still_orbiting
+		):
+			var pos := Vector3(float(f.get("pos_x", 0.0)), 0.0, float(f.get("pos_z", 0.0)))
+			var face := Vector3.ZERO
+			if bool(orb["ordered"]):
+				var dest: Vector3 = orb["destination"]
+				face = Vector3(dest.x - pos.x, 0.0, dest.z - pos.z)
+			_sync_fleet_world(orb, pos, face, false)
+		_fleet_orbiters[i] = orb
+		i -= 1
+
+
+func _enter_hyperlane(fleet_index: int, portal: Dictionary) -> void:
+	## Legacy helper — portal entry is authoritative in GameState; keep for
+	## explicit UI jumps if needed. Prefer begin_hyperlane_transit via sim.
+	var orb: Dictionary = _fleet_orbiters[fleet_index]
+	var fid := String(orb.get("fleet_id", ""))
+	var dest := int(portal.get("target_star", -1))
+	if fid.is_empty() or dest < 0:
+		return
+	var route_dest := GameState.route_next_hyperlane_dest(fid)
+	if route_dest >= 0 and route_dest != dest:
+		return
+	if not GameState.begin_hyperlane_transit(fid, _star_id, dest):
+		return
+	_despawn_fleet_at(fleet_index, true)
 
 func _update_flag_positions() -> void:
 	var cam := get_viewport().get_camera_3d()
@@ -408,8 +1350,12 @@ func _update_flag_positions() -> void:
 		return
 	var shown := 0
 	var vp := get_viewport().get_visible_rect().size
+	## Separate stacks by marker kind (fleets / planets / fields).
+	var fleet_items: Array = []
+	var planet_items: Array = []
+	var field_items: Array = []
 	for flag in _flags:
-		if not is_instance_valid(flag):
+		if flag == null or not is_instance_valid(flag):
 			continue
 		var wp: Vector3 = flag.world_pos
 		if cam.is_position_behind(wp):
@@ -419,10 +1365,25 @@ func _update_flag_positions() -> void:
 		if tip.x < -80.0 or tip.y < -80.0 or tip.x > vp.x + 80.0 or tip.y > vp.y + 80.0:
 			flag.visible = false
 			continue
-		flag.place_at_screen(tip)
-		shown += 1
+		var item := {"flag": flag, "tip": tip}
+		var marker := String(flag.meta.get("marker", "planet"))
+		match marker:
+			"fleet":
+				fleet_items.append(item)
+			"field", "asteroid":
+				field_items.append(item)
+			_:
+				planet_items.append(item)
+	PlanetFlag.apply_fleet_flag_layout(fleet_items, vp)
+	PlanetFlag.apply_flag_layout(planet_items, vp)
+	PlanetFlag.apply_flag_layout(field_items, vp)
+	shown = fleet_items.size() + planet_items.size() + field_items.size()
 	if _flag_hud:
-		_flag_hud.text = "overlay: %d/%d flags" % [shown, _flags.size()]
+		var total := 0
+		for f2 in _flags:
+			if f2 != null and is_instance_valid(f2):
+				total += 1
+		_flag_hud.text = "overlay: %d/%d flags" % [shown, total]
 
 
 func _add_asteroid_field(af: Dictionary, mu: float, host: Vector3) -> void:
@@ -432,13 +1393,13 @@ func _add_asteroid_field(af: Dictionary, mu: float, host: Vector3) -> void:
 	var ang_w := float(af.get("angular_width", TAU))
 	var phase0 := float(af.get("phase0", 0.0))
 	var inc := float(af.get("inclination", 0.04))
-	var seed := int(af.get("seed", 1))
+	var field_seed := int(af.get("seed", 1))
 	var n_dots := int(af.get("n_dots", 900))
 	n_dots = clampi(n_dots, 80, 1800)
-	var name := String(af.get("name", "Asteroids"))
+	var field_name := String(af.get("name", "Asteroids"))
 
 	var rng := RandomNumberGenerator.new()
-	rng.seed = seed
+	rng.seed = field_seed
 	var positions: PackedVector3Array = PackedVector3Array()
 	positions.resize(n_dots)
 
@@ -500,7 +1461,7 @@ func _add_asteroid_field(af: Dictionary, mu: float, host: Vector3) -> void:
 		mm.set_instance_color(i, palette[rng.randi() % palette.size()])
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
-	mmi.name = name
+	mmi.name = field_name
 	_bodies.add_child(mmi)
 
 	var template := PackedVector3Array()
@@ -516,7 +1477,7 @@ func _add_asteroid_field(af: Dictionary, mu: float, host: Vector3) -> void:
 		"center": center,
 		"radius": maxf(half_w + 0.4, 0.5),
 		"meta": {
-			"name": name,
+			"name": field_name,
 			"shape": shape,
 			"a": a,
 			"radial_width": half_w * 2.0,
@@ -570,6 +1531,42 @@ func _apply_orbits() -> void:
 		var flag_i: int = int(orb.flag_i)
 		if flag_i >= 0 and flag_i < _flags.size() and is_instance_valid(_flags[flag_i]):
 			_flags[flag_i].world_pos = pos
+
+	for orb in _fleet_orbiters:
+		# Under orders / free-disk: GameState owns pose (_sync_fleets_from_state).
+		# Stationary / hostile / engaged / left-orbit: hold world pose
+		# (post-battle survivors must not snap back to phase0 spawn).
+		var fid_hold := String(orb.get("fleet_id", ""))
+		var still_orbiting := bool(orb.get("orbiting", true))
+		if GameState.has_fleet(fid_hold):
+			still_orbiting = bool(GameState.fleets[fid_hold].get("orbiting", still_orbiting))
+		var ordered_hold := bool(orb.get("ordered", false))
+		if GameState.has_fleet(fid_hold):
+			ordered_hold = bool(GameState.fleets[fid_hold].get("ordered", ordered_hold))
+		if (
+			ordered_hold
+			or bool(orb.get("stationary", false))
+			or bool(orb.get("hostile", false))
+			or bool(orb.get("engaged", false))
+			or GameState.is_fleet_engaged(fid_hold)
+			or not still_orbiting
+		):
+			# Do not write GameState — ordered poses come from sim; hold visuals
+			# until _sync_fleets_from_state refreshes them.
+			continue
+		var a: float = float(orb.a)
+		var phase0: float = float(orb.phase0)
+		var inc: float = float(orb.inc)
+		var period: float = float(orb.period)
+		var host: Vector3 = orb.host
+		var p0 := host + _planet_pos_at_day(a, phase0, inc, period, d0)
+		var p1 := host + _planet_pos_at_day(a, phase0, inc, period, d1)
+		p0.y = 0.0
+		p1.y = 0.0
+		var pos := p0.lerp(p1, t)
+		pos.y = 0.0
+		var tang := p1 - p0
+		_sync_fleet_world(orb, pos, tang)
 
 	for orb in _field_orbiters:
 		var mmi: MultiMeshInstance3D = orb.mmi
@@ -650,7 +1647,7 @@ func _rotate_field_point(p0: Vector3, day: float, period: float, inc: float) -> 
 
 
 func _add_hyperlane(hl: Dictionary) -> void:
-	var name := String(hl.get("name", "Hyperlane Entry"))
+	var portal_name := String(hl.get("name", "Hyperlane Entry"))
 	var target_label := String(hl.get("target_label", "System"))
 	var target_star := int(hl.get("target_star", -1))
 	var cx := float(hl.get("x", 0.0))
@@ -690,7 +1687,7 @@ func _add_hyperlane(hl: Dictionary) -> void:
 	fmat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	fmat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	fill_mi.material_override = fmat
-	fill_mi.name = name
+	fill_mi.name = portal_name
 	_bodies.add_child(fill_mi)
 
 	var ost := SurfaceTool.new()
@@ -742,11 +1739,18 @@ func _add_hyperlane(hl: Dictionary) -> void:
 		"center": center,
 		"radius": maxf(ah, ch) + 0.15,
 		"meta": {
-			"name": name,
+			"name": portal_name,
 			"target_label": target_label,
 			"target_star": target_star,
 			"radius_au": sqrt(cx * cx + cy * cy),
 		},
+	})
+	_hyperlane_portals.append({
+		"center": center,
+		"radius": maxf(ah, ch) + 0.25,
+		"target_star": target_star,
+		"target_label": target_label,
+		"name": portal_name,
 	})
 
 
@@ -760,6 +1764,8 @@ func _try_pick(screen_pos: Vector2) -> void:
 	var best_score := 1e9
 	for i in _pickables.size():
 		var item: Dictionary = _pickables[i]
+		if String(item.get("kind", "")) == "gone":
+			continue
 		var center: Vector3 = item.center
 		var radius: float = float(item.radius)
 		var w := center - from
@@ -774,6 +1780,9 @@ func _try_pick(screen_pos: Vector2) -> void:
 			best_score = dist
 			best_i = i
 	if best_i < 0:
+		# Empty space: clear selection / close info panel.
+		if _panel_open:
+			close_panel()
 		return
 	_show_info(_pickables[best_i])
 
@@ -783,6 +1792,8 @@ func _show_info(item: Dictionary) -> void:
 	match String(item.kind):
 		"planet":
 			_open_planet_panel(meta)
+		"fleet":
+			_open_fleet_panel(meta)
 		"asteroid":
 			_open_asteroid_panel(meta)
 		"hyperlane":
@@ -843,7 +1854,7 @@ func _open_planet_panel(meta: Dictionary) -> void:
 	if _panel == null:
 		return
 	_panel_open = true
-	_panel_is_planet = true
+	_panel_mode = "planet"
 	_panel_meta = meta
 	_panel.visible = true
 	if _panel_title:
@@ -912,7 +1923,7 @@ func _open_asteroid_panel(meta: Dictionary) -> void:
 	if _panel == null:
 		return
 	_panel_open = true
-	_panel_is_planet = false
+	_panel_mode = "asteroid"
 	_panel_meta = meta
 	_panel.visible = true
 	if _panel_title:
@@ -949,12 +1960,194 @@ func _refresh_asteroid_stats(meta: Dictionary) -> void:
 	]
 
 
+func _open_fleet_panel(meta: Dictionary) -> void:
+	if _panel == null:
+		return
+	var target_i := int(meta.get("fleet_i", -1))
+	_panel_open = true
+	_panel_mode = "fleet"
+	_panel_meta = meta
+	_selected_fleet_i = target_i
+	GameState.select_fleet(String(meta.get("fleet_id", "")))
+	_panel.visible = true
+	if _panel_title:
+		_panel_title.text = String(meta.get("name", "Fleet"))
+	if _panel_kind:
+		var faction := String(meta.get("faction", ""))
+		var hostile := bool(meta.get("hostile", false))
+		var head := faction if not faction.is_empty() else "Fleet"
+		if hostile:
+			_panel_kind.text = "%s · hostile · %d ships" % [head, int(meta.get("ship_count", 0))]
+		else:
+			_panel_kind.text = "%s · %d ships" % [head, int(meta.get("ship_count", 0))]
+	var ca: Color = meta.get("color_a", Color(0.72, 0.82, 0.92))
+	var cb: Color = meta.get("color_b", Color(0.12, 0.18, 0.28))
+	if _panel_preview:
+		_panel_preview.texture = PlanetFlag.make_fleet_texture(128, ca, cb)
+	_refresh_fleet_stats(meta)
+	if _panel_empty:
+		if bool(meta.get("hostile", false)):
+			_panel_empty.text = "Inspect only — contents viewable; this fleet cannot be ordered or moved."
+		elif bool(meta.get("engaged", false)):
+			_panel_empty.text = "Engaged in battle — destinations locked until resolved."
+		else:
+			_panel_empty.text = (
+				"RMB disk destination · RMB portal to path to that star · RMB fleet to pursue"
+				+ " · Reach exit portal to jump (28-day transit; 28-day entry cooldown)"
+				+ " · LMB empty deselects."
+			)
+	if _info:
+		_info.visible = false
+
+
+func _refresh_fleet_stats(meta: Dictionary) -> void:
+	if _panel_stats == null:
+		return
+	var ship_lines := ""
+	var templates = meta.get("ship_templates", [])
+	if typeof(templates) == TYPE_ARRAY and not templates.is_empty():
+		for t in templates:
+			var td: Dictionary = t
+			var nm := String(td.get("name", "Ship"))
+			var cls := String(td.get("class", ""))
+			var sz := String(td.get("size", ""))
+			if not cls.is_empty() and not sz.is_empty():
+				ship_lines += "\n  · %s  (%s · %s)" % [nm, cls, sz]
+			elif not sz.is_empty():
+				ship_lines += "\n  · %s  (%s)" % [nm, sz]
+			elif not cls.is_empty():
+				ship_lines += "\n  · %s  (%s)" % [nm, cls]
+			else:
+				ship_lines += "\n  · %s" % nm
+	else:
+		var ships = meta.get("ships", [])
+		if typeof(ships) == TYPE_ARRAY:
+			for s in ships:
+				ship_lines += "\n  · %s" % String(s)
+	var dest_line := "—  (RMB to set)"
+	var eta_line := "—"
+	var cooldown_line := ""
+	var fleet_i := int(meta.get("fleet_i", -1))
+	var engaged := bool(meta.get("engaged", false))
+	var hostile := bool(meta.get("hostile", false))
+	var pursue_id := String(meta.get("pursue_fleet_id", ""))
+	var fid_stats := String(meta.get("fleet_id", ""))
+	if GameState.has_fleet(fid_stats):
+		pursue_id = String(GameState.fleets[fid_stats].get("pursue_fleet_id", pursue_id))
+		engaged = bool(GameState.fleets[fid_stats].get("engaged", engaged))
+		var cd_left := GameState.hyperlane_entry_cooldown_left(fid_stats)
+		if cd_left > 0.0:
+			cooldown_line = (
+				"[color=#9eb6d8]Hyperlane ready[/color]  in %.0f days\n" % ceilf(cd_left)
+			)
+	if hostile:
+		dest_line = "stationary (hostile)"
+		eta_line = "—"
+	elif engaged:
+		dest_line = "locked (battle)"
+		eta_line = "—"
+		var bid := ""
+		if not fid_stats.is_empty():
+			bid = GameState.fleet_battle_id(fid_stats)
+		if not bid.is_empty() and GameState.battles.has(bid):
+			var b: Dictionary = GameState.battles[bid]
+			eta_line = "round %d" % int(b.get("round", 0))
+	elif not pursue_id.is_empty():
+		var tname := pursue_id
+		if GameState.has_fleet(pursue_id):
+			tname = String(GameState.fleets[pursue_id].get("name", pursue_id))
+		dest_line = "Pursuing %s" % tname
+		if fleet_i >= 0 and fleet_i < _fleet_orbiters.size():
+			var root_p: Node3D = _fleet_orbiters[fleet_i].root
+			var dest_p: Vector3 = _fleet_orbiters[fleet_i].get(
+				"destination", Vector3(float(meta.get("dest_x", 0.0)), 0.0, float(meta.get("dest_z", 0.0)))
+			)
+			if is_instance_valid(root_p):
+				var dist_p := Vector3(root_p.position.x, 0.0, root_p.position.z).distance_to(
+					Vector3(dest_p.x, 0.0, dest_p.z)
+				)
+				if dist_p <= FLEET_ARRIVE_EPS_AU:
+					eta_line = "at target"
+				elif _fleet_speed_au_per_day > 1e-9:
+					eta_line = "%.1f days (closing)" % (dist_p / _fleet_speed_au_per_day)
+	elif bool(meta.get("ordered", false)):
+		var route_n := 0
+		if GameState.has_fleet(fid_stats):
+			route_n = GameState.fleet_route(fid_stats).size()
+		if route_n > 0:
+			dest_line = "Route · (%.2f, %.2f) AU · %d hops left" % [
+				float(meta.get("dest_x", 0.0)), float(meta.get("dest_z", 0.0)), route_n
+			]
+		else:
+			dest_line = "(%.2f, %.2f) AU" % [float(meta.get("dest_x", 0.0)), float(meta.get("dest_z", 0.0))]
+		if fleet_i >= 0 and fleet_i < _fleet_orbiters.size():
+			var root: Node3D = _fleet_orbiters[fleet_i].root
+			if is_instance_valid(root):
+				var dest := Vector3(float(meta.get("dest_x", 0.0)), 0.0, float(meta.get("dest_z", 0.0)))
+				var dist := Vector3(root.position.x, 0.0, root.position.z).distance_to(dest)
+				if dist <= FLEET_ARRIVE_EPS_AU:
+					eta_line = "arrived"
+				elif _fleet_speed_au_per_day > 1e-9:
+					eta_line = "%.1f days" % (dist / _fleet_speed_au_per_day)
+	_panel_stats.text = (
+		"[color=#9eb6d8]Ships[/color]  %d%s\n"
+		+ "[color=#9eb6d8]Cruise speed[/color]  %.3f AU/day\n"
+		+ "  (diameter %.1f AU ÷ %d days)\n"
+		+ "[color=#9eb6d8]Destination[/color]  %s\n"
+		+ "%s"
+		+ "[color=#9eb6d8]ETA[/color]  %s\n"
+		+ "[color=#9eb6d8]Sample day[/color]  %s"
+	) % [
+		int(meta.get("ship_count", 0)),
+		ship_lines,
+		_fleet_speed_au_per_day,
+		2.0 * _system_edge_au,
+		int(FLEET_CROSSING_DAYS),
+		dest_line,
+		cooldown_line,
+		eta_line,
+		GameState.day_label_text(),
+	]
+
+
+func _refresh_battle_hud() -> void:
+	if _info == null or _star_id < 0:
+		return
+	var line := GameState.battle_hud_line(_star_id)
+	if line.is_empty():
+		return
+	# Keep battle status visible on the system HUD tip line.
+	if not _panel_open:
+		_info.visible = true
+		_info.text = line
+
+
 func close_panel() -> void:
+	## Explicit deselect (Esc / LMB empty / X): clear GameState selection.
+	var was_fleet := _panel_mode == "fleet"
+	var was_fid := String(_panel_meta.get("fleet_id", ""))
 	_panel_open = false
 	_panel_meta = {}
+	_panel_mode = ""
+	_selected_fleet_i = -1
+	_close_panel_ui()
+	if was_fleet and not was_fid.is_empty() and GameState.selected_fleet_id == was_fid:
+		GameState.clear_fleet_selection()
+	if _info:
+		_info.visible = true
+	_refresh_battle_hud()
+
+
+func _hide_panel_keep_selection() -> void:
+	## Close panel UI without clearing GameState.selected_fleet_id.
+	_panel_open = false
+	_panel_meta = {}
+	_panel_mode = ""
+	_selected_fleet_i = -1
 	_close_panel_ui()
 	if _info:
 		_info.visible = true
+	_refresh_battle_hud()
 
 
 func _close_panel_ui() -> void:

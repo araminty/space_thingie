@@ -26,7 +26,7 @@ from starmap import (
     prepare_trade,
     _green_counting_stars,
 )
-from system_gen import contents_path, ensure_system_contents
+from system_gen import CONTENTS_VERSION, contents_path, ensure_system_contents
 
 GODOT_DIR = ROOT_DIR / "godot"
 GALAXY_DIR = GODOT_DIR / "data" / "galaxy"
@@ -105,7 +105,7 @@ def export_systems(sm, cfg: StarmapConfig) -> Path:
         -1,
     )
     payload = {
-        "version": 9,
+        "version": CONTENTS_VERSION,
         "seed": int(cfg.seed),
         "n": len(contents),
         "neverdark_star_index": neverdark_idx,

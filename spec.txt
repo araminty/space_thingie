@@ -11,15 +11,187 @@ Interactive 3D view: Plotly → `starmap.html` (static preview `starmap.png`).
 `godot/data/systems/` via `.venv/bin/python export_godot.py`. LMB a star →
 system view (planets, asteroid fields, hyperlane ovals). Multi-star systems use
 wide separations with per-host planets. Planets get **zoom
-inset flags** (circle-in-square + hockey-stick leader) that track on screen;
-click inset or body → left info panel. Shared **▶ Play** / Space (visible on
+inset flags** (circle-in-square + hockey-stick leader + rectangular badge around
+lens / optional pose dial / name) that track on screen; click badge or body → left info panel.
+**Planet / field flag stacking:** nearby tips within ~64 screen px stack
+(vertical lens column; legs toward tips; name side of the badge outward). Badge
+/ hockey-stick **always to the right** of the tip (side = +1). Fleets, planets,
+and field markers stack in separate groups. Shared **▶ Play** / Space (visible on
 galaxy map and in systems) advances a galaxy-wide clock at **0.5 days/sec**
-(prior rate ÷ 48; half-hour steps). Orbits **lerp** between whole-day samples.
+baseline (prior rate ÷ 48; half-hour steps). HUD speed strip beside Play offers
+**¼× … 16×** multipliers (`0.25, 0.5, 1, 2, 4, 8, 16`); `GameState.play_speed`
+scales the day advance while playing (`[` / `]` cycle all seven speeds; digits
+**1…5** set `0.25×, 0.5×, 1×, 4×, 16×` — skipping 2× and 8× — and do **not**
+toggle pause). Orbits **lerp** between
+whole-day samples.
+**Tab navigation:** In system view, Tab always returns to the galaxy (even if a
+panel is open). On the galaxy map, Tab uses a ~0.4s double-tap window: single
+Tab opens the known/clickable star under the mouse (same fog/enter rules as
+LMB); double Tab opens `GameState.last_system_id` (set on every successful
+`enter_system`). Fogged stars are not enterable.
 Hyperlane portals stay fixed. Esc closes panel, then returns to galaxy.
-Hyperlane oval click jumps to the destination system.
-**Web / GitHub Pages:** `python export_web.py` builds `site/` (galaxy +
-featured system HTML). Workflow `.github/workflows/deploy-pages.yml` publishes
-that folder on push to `main`/`master` when Pages is set to “GitHub Actions”.
+Hyperlane oval click jumps to the destination system (blocked if fogged).
+**Fog of war (Godot galaxy map):** Undiscovered stars render as a **deep maroon
+single sphere** (multiplicity glyphs hidden) and **cannot be clicked**. No
+discovery mechanics yet. Revealed set = **Sol’s home cluster** (all `tier==HOME`
+stars sharing Sol’s `unlock_group`) **plus** every star within **2 lane hops** of
+that cluster (BFS on the full lane graph, not unlocked-only). Lanes wholly in
+fog are hidden; spurs from known→fog are muted maroon. HUD shows known/fog
+counts. Opening camera is **angled (~48° pitch) and zoomed** on Sol’s home
+cluster. **Galaxy camera:** RMB drag pans, MMB drag turntable-orbits, wheel
+zooms (WASD pan unchanged). System orbit camera keeps RMB orbit / MMB pan.
+Fleet/star RMB orders still win via `_input` before camera `_unhandled_input`.
+Shared **starfield** is a camera-locked **sphere** with an equirectangular
+star texture (uniform solid-angle sampling, nearest filtering, 1px stars).
+**Fleet / ships (Godot):** Reusable ship template at
+`godot/scenes/ships/basic_spaceship.tscn` (PackedScene — Godot’s prefab).
+Placeholder mesh: box hull + twin cylinder nacelles aft with red thruster tips.
+Open `godot/scenes/ship_preview.tscn` to view an instance.
+**Sol prototype fleets:** system contents may include a `fleets` array. Sol has
+five fleets patterned on battle-sim forces: **Rim Garrison** (`force_rear_garrison`,
+Compact: Packet×3, Quill×1) near Earth (~1.0 AU); **Patrol Red** (`force_patrol_red`,
+March: Lancer×2, Whip×3, Outrider×2, Lance-fly×1, Border×3) near Mars (~1.52 AU);
+**Lockbar Choke** (`force_lockbar_choke`, Compact: Lockbar×1, Quill×2, Packet×4) in
+the belt (~2.8 AU); **Harbour Line** (`force_harbour_line`, Compact: Ward-keel×1,
+Ledger×2, Quill×2, Cutter-fly×1, Grain-gun×6) cis-Jovian (~4.0 AU); **Veil Fall**
+(`force_veil_fall`, Choir: Chorus-hull×1, Nidus×2,
+Thread×4, Sting-fly×3, Bleed-fly×2) — **hostile**, stationary on the disk beyond
+Jupiter (~6.2 AU, Y=0; not orbiting). Distinct `phase0` per friendly fleet. All
+hulls use the shared `basic_spaceship` mesh for now; visual difference is **size
+band only** via `size_scale` (H+ 2.4, H 2.0, L 1.5, M 1.35, S 0.65). Formation
+offsets are auto-laid out tightly (~0.0035 AU spacing). Hulls are scaled
+microscopic at system view (invisible at normal zoom); **one** shared planet-style
+zoom-inset flag (hockey-stick + circular lens with three chevrons + name in one
+badge panel around the content cluster) marks each fleet (friendly and hostile). **Fleet flag
+stacking:** when two or more fleet tips fall within ~64 screen px (friendly and
+hostile clustered separately), their lenses form a vertical column (spacing ≈
+lens pitch) **always to the left** of the tip (side = −1; no free-space side
+pick); hockey-stick legs sit on the near side of the column and slants reconnect
+each lens to its fleet tip; badge name side sits opposite the legs. Solo fleets
+use the same left-of-tip geometry. Same layout (including badge chrome) applies
+to galaxy transit flags **and** galaxy in-system fleet flags. Click flag or pick
+near the fleet → left info panel (roster shows class + size). **Hostiles** are selectable for inspect only — no RMB
+destination, no travel (stay stationary). With a **friendly** fleet selected,
+**RMB** sets a destination on the solar disk (Y=0; no out-of-plane component).
+While ▶ playing, the fleet cruises at constant speed (no orbital mechanics) sized
+so a **diameter** crossing of the system edge takes **20 days**. A cyan ring marks
+the destination. Reaching a **hyperlane entry** despawns the fleet from the system
+and starts a **28-day** galaxy transit; the same zoom-inset fleet flag
+(hockey-stick + chevron lens + badge) tracks progress along the lane on the
+galaxy map. A fleet may **enter** a hyperlane at most once every **28 days**
+(`last_hyperlane_enter_day` on the fleet; stamped when transit begins). If the
+cooldown has not elapsed when the fleet reaches a portal, `begin_hyperlane_transit`
+rejects entry; the fleet stays ordered at the portal and the cruise tick retries
+each day until ready. Seeded fleets start ready (`last_hyperlane_enter_day` = −999).
+Transit flag placement is **visual-only inset** from both endpoints
+(`TRANSIT_LANE_MARGIN` ≈ 0.12 in `galaxy_map.gd`: display
+`t = margin + p*(1-2*margin)`) so markers do not sit inside star glyphs;
+28-day transit timing / arrival logic is unchanged. **Galaxy in-system fleet flags:** on
+the galaxy map, each **known** star with friendly fleets parked in-system (not
+in transit) shows **up to 3** selectable PlanetFlag markers stacked beside the
+star glyph (leader tip at star center; lenses stack beside). Hostiles stay system-view only
+(unless already shown elsewhere). If a system has **more than 3** friendlies,
+▲/▼ cycle controls appear beside that stack; each click advances the window by
+one (modulo). Per-system scroll offsets live in `galaxy_map`
+(`_system_fleet_scroll`). Authored fleets are seeded into `GameState` at galaxy
+load so Sol markers appear before first visit. Selecting a flag calls
+`GameState.select_fleet` and opens the galaxy fleet sidebar. Markers refresh on
+`fleets_changed` (transit start removes the origin-system flag). **System-pose
+dial:** each galaxy in-system friendly fleet flag shows a compact round dial to
+the **right of the lens** inside the same rectangular badge as the lens and name
+(layout `lens | dial | name` when the name is on the right; dial stays right of
+the lens if the stack is mirrored). The dial is a
+top-down map of the solar disk: `pos_x`/`pos_z` (AU) map onto the rim using
+`GameState.system_cruise_edge_au` (hyperlane ring / content extent; fallback
+~36 AU). Dial axes (Control Y-down): **+X left**, **+Z up** (draw as
+`Vector2(-pos_x, -pos_z)`) so the dial matches OrbitCamera yaw ≈ −90
+(world +X appears left when looking +Z).
+A thin cyan/white arrow points from center to the fleet; a small blinking
+dot marks the pose. Within **0.5 AU** of the system origin the arrow is
+omitted (center blink only). Transit fleet flags omit the dial. Pose updates
+as GameState advances. **Galaxy fleet sidebar (`GalaxyFleetPanel`):** shown whenever
+`selected_fleet_id` is set while on the galaxy map — in transit **or** parked in
+a system. Contents: name, ships/composition, location (system name or
+“in transit A→B”), destination/route/pursue/engaged note, ETA when transiting.
+LMB on a transit flag selects and opens it; switching system→galaxy with a
+selection reopens it for that fleet. Friendlies are orderable; hostiles are
+inspect-only. LMB empty / Esc / panel close clears selection and hides the
+panel. **Turn around** is visible only while the selected fleet is mid-transit
+(friendly). System-view left panel is unchanged. **Selection persistence:**
+`selected_fleet_id` survives galaxy ↔ system view switches (and hyperlane
+transit / arrival). It is cleared only by Esc / panel close / LMB empty / wipe.
+Opening a system re-selects the fleet in that system (panel + `_selected_fleet_i`)
+when the id matches. **Turn around:** with a friendly transiting
+fleet selected, **Turn around** on the panel (or **RMB** on that transit flag)
+reverses course — swap `from_star`↔`to_star` and remap progress so
+`p' = 1−p` via `transit_start_day = day − (1−p)·transit_days` (marker stays put;
+remaining time = `p·transit_days`); remaining multi-hop `route` is cleared.
+Arrival still uses existing placement at the
+(new) destination. On
+arrival the fleet appears in the destination system **inward** of the return portal
+(~72% of the portal radius from the system center). Live fleets are tracked in
+`GameState`. **Multi-hop pathing:** With a friendly movable fleet **in a system**
+or **mid-transit**, order a lane path to a destination star D:
+- **System view:** RMB on a hyperlane portal / linked-star oval (priority over
+  pursue / disk dest) → path to that star; player camera does **not** jump (LMB
+  portal still enters the linked system as before). In-system only (not transit).
+- **Galaxy map:** RMB on a revealed star → path order for the selected friendly
+  fleet whether it is in-system or mid-transit (RMB on own transit flag still
+  means turn around, not a path order).
+Algorithm (in-system): BFS on `GalaxyData` lanes → star id list `[s0…sn]`; build
+a `route` queue alternating `system_cruise` (disk dest = exit portal toward the
+next hop, or final inward arrival pose in `sn`) and `hyperlane` hops. Portal
+positions come from system contents hyperlanes, else ring radius × galactic
+outward direction. Execution: cruise to portal → existing 28-day transit begin
+(blocked until 28-day entry cooldown allows; consume matching cruise+hyperlane
+on successful begin) → on arrival spawn inward and apply next
+cruise dest. **Mid-transit re-route:** fleet on lane A→B at progress
+`p`∈[0,1] ordered to D. Cost continue = `(1−p) + path_hops(B,D)`; cost reverse
+= `p + path_hops(A,D)` (`path_hops` = BFS edge count via `GalaxyData.shortest_path`,
+0 if same star). Pick the strictly shorter; **ties prefer continue** (no reverse).
+If reverse wins, flip via existing transit reverse (`p' = 1−p`). Then set `route`
+from the chosen arrival end to D (do **not** duplicate the current hop); if D is
+that end, only the final inward cruise. Clears any prior route. **In-system
+cruise (and portal→hyperlane begin) simulates in
+`GameState` on the shared day clock whenever ▶ playing** — not only while that
+system’s view is open — so multi-hop routes progress on the galaxy map.
+`system_view` renders from GameState poses and does not double-integrate.
+New path replaces any prior route; RMB disk dest / pursue / reverse /
+battle engage clear the route. Final waypoint for both system-portal and galaxy
+orders is the standard arrival-inward location in the destination system.
+**Pursue:** with a **friendly (movable)** fleet selected, **RMB**
+on another fleet’s marker (PlanetFlag or pickable; friendly or hostile) sets
+`pursue_fleet_id` — cruise toward the target’s live disk position (Y=0),
+destination updating each tick; pursuers maintain a **0.02 AU** standoff
+(`FOLLOW_STANDOFF_AU`: dest is on the segment toward the target, 0.02 AU short
+of it; if already within 0.02 AU, hold / do not jitter). LMB on another fleet only selects/inspects
+(opens panel); it does **not** start pursue. RMB on empty disk keeps fixed
+destination for the selected fleet; RMB on a fleet marker must not also set a
+disk dest under that click. RMB fixed destination clears pursue; starting
+pursue clears a fixed dest in favor of the live target. Do not pursue self;
+hostiles cannot be given pursue/move orders (selecting a hostile alone still
+inspect-only; RMB while hostile selected does nothing for move/pursue).
+If the **target enters hyperspace**, all pursuers stop (clear `pursue_fleet_id`
+and ordered dest; leave `orbiting=false`). **Contact battle:** if a friendly
+fleet comes within **0.25 AU** (`BATTLE_CONTACT_AU`) of a **lone** hostile in the
+same system, both freeze and fight. **Join battle:** any non-engaged fleet
+(friendly or hostile) within **0.30 AU** (`BATTLE_JOIN_AU`) of the **nearest
+engaged participant** of an ongoing battle joins that engagement (freeze, clear
+ordered/pursue, `engaged=true`); multi-fleet sides keep per-fleet ship identity
+through rounds; wiped fleets removed at end, survivors stay at freeze pose.
+One simplified battle round every **half hour** of sim time (`1/48` day);
+friendlies may take new RMB orders after engage clears.
+**Battle info bar:** when the selected fleet is `engaged`, a bottom HUD bar
+(`UI/BattleBar` → `battle_bar.gd`) shows up to **four** fleets per side from
+that battle’s `friendly_ids` / `hostile_ids` (prefer bigger: ship count, then
+remaining HP / size). Each fleet card: name + vertical class×count ship list
+(from live battle units, else `ship_templates` / `ships`), clipped to how many
+lines fit in the bar (`max_lines` + ellipsis). Friendlies left, hostiles right
+with a VS gap. Hides on deselect, non-engaged selection, or battle end;
+refreshes on `fleet_selection_changed` / `fleets_changed` / `battles_changed`
+(attrition updates the list).
+**LMB on empty system-map space** closes the info panel (deselect).
+Contents cache **v12**.
 
 Final game scale may be a couple thousand stars; current prototype uses the
 sizes below.
@@ -90,6 +262,12 @@ apart). Those seeds are assigned **lore names** from
 `lore_homeworlds.py` / conventional-species history (kids-to-feed roster).
 **Sol** and **Brightstep** are always among the named seeds when ≥2 seeds
 exist. Names are visible on the galactic map (Plotly text + Godot Label3D).
+Godot homeworld Label3Ds scale with camera zoom the same way as star glyphs
+(`STAR_ZOOM_*`): capital height ≈ displayed primary-sphere diameter
+(`2 × STAR_SPHERE_RADIUS × glyph_scale × zoom_factor`). Names sit to the
+**right** of the star (left-aligned Label3D); horizontal offset tracks
+displayed radius (`STAR_SPHERE_RADIUS × scale × zoom + gap`) so text clears
+the glyph at every zoom. Fog stars stay unlabeled.
 Population/trade still cascade from these seeds via `homeworld_id`.
 
 **Sol special:** The Sol seed gets a fixed single-star system: Mercury, Venus,
@@ -109,7 +287,7 @@ equatorial ice wall, burning poles, temperate mid-bands, large habitable zone
 on the binary-facing pole, tiny temperate cap on the far pole; pole flip still
 centuries away. Every **other** star has an independent **~1/20,000** chance to
 roll the same layout (generic names; not labeled Brightstep on the galaxy map).
-Contents cache **v9**; `sol_star_index`, `neverdark_star_index`, and
+Contents cache **v11**; `sol_star_index`, `neverdark_star_index`, and
 `neverdark_indices` are stored in the contents payload.
 
 **Hyperlane ring:** Portals sit on one shared ring centered on the combined
@@ -144,16 +322,14 @@ outermost gas giant). Portals do **not** orbit. All portals share one ring
 radius about the system center (contents **v4**). Regenerating contents clears
 cached system HTML.
 
-**Flags:** One transparent HTML 2D object per planet (`#overlays`): a small zoom
-inset (~¼ prior size) in the **upper-right**, plus a **hockey-stick** SVG leader
-(slant down to the planet; horizontal into the inset at/above the planet’s
-screen level). The inset box is **clickable** and opens a left-side planet info
-panel (sparse for now). Positions use Plotly’s `cameraParams` MVP and track as
-the camera moves. Extraneous space is transparent. A corner HUD shows
-`overlay: N/M flags`. System views open in a **same-tab iframe** over the
-galaxy map (HTML cached under `cache/systems/`). Reopening the same system
-reuses the already-loaded iframe (no Plotly re-init). **Galaxy map** / Esc
-hides the iframe via `postMessage`.
+**Flags:** One PlanetFlag per planet (Godot HUD): circular zoom inset + hockey-
+stick leader + one rectangular badge panel wrapping the content cluster
+(lens + optional system-pose dial + name; name opposite the connector leg).
+Badge chrome is a **fixed-width** panel drawn **behind** the stick, lens, dial,
+and name; names word-wrap (up to ~3 lines) with ellipsis if still too long.
+The whole badge is clickable and opens the left-side planet info panel. Nearby
+planet flags stack like fleets. Extraneous space is transparent.
+A corner HUD shows `overlay: N/M flags`.
 
 **System contents:** Map generation also rolls **fast** per-star planets /
 asteroid-field / hyperlane-entry properties into `cache/system_contents.json`

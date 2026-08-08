@@ -22,30 +22,36 @@ python export_godot.py
 
 ## Publish online (GitHub Pages)
 
-This repo includes a static export + Actions workflow.
+Pages serves the **Godot Web** export (not the Plotly `export_web.py` site).
 
 1. Push to GitHub (`main` or `master`).
 2. Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-3. The workflow [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml)
-   runs `python export_web.py` and deploys the `site/` folder.
+3. The workflow [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml):
+   - runs `python export_godot.py` (refreshes `godot/data/`)
+   - installs Godot **4.7.1** + export templates
+   - exports preset **Web** → `build/web/`
+   - deploys that folder with `actions/deploy-pages`
 
 After the first successful run, the site is at:
 
 `https://<user>.github.io/<repo>/`
 
-### What the static site includes
+Godot’s default relative asset URLs work under a project-pages subpath (`/repo/`).
+Web export keeps `variant/thread_support=false` so Pages does not need COOP/COEP headers.
 
-- Full interactive **galaxy map** (`starmap.html`)
-- Pre-built **featured systems**: named lore homeworlds (Sol, Brightstep / Neverdark, …)
-- Other stars show a short note that the full on-demand render needs local `--serve`
+### Build / test the Godot Web export locally
 
-### Build the site locally
+Requires Godot 4.7.x with the Web export template installed.
 
 ```bash
-python export_web.py
-python -m http.server -d site 8080
+python export_godot.py
+mkdir -p build/web
+godot --headless --path godot --export-release "Web" build/web/index.html
+python -m http.server -d build/web 8080
 # open http://127.0.0.1:8080/
 ```
+
+(`export_web.py` still builds the optional Plotly static site into `site/` for local use; it is not what Pages deploys.)
 
 ## Layout
 
@@ -53,9 +59,10 @@ python -m http.server -d site 8080
 |------|------|
 | `starmap.py` | Galaxy generation + Plotly map |
 | `system_gen.py` / `system_view.py` | Per-system contents + HTML views |
-| `export_godot.py` | JSON for the Godot client |
-| `export_web.py` | Static site for GitHub Pages |
-| `godot/` | Godot 4 project |
+| `export_godot.py` | JSON/NPZ for the Godot client (`godot/data/`) |
+| `export_web.py` | Optional Plotly static site (`site/`; not Pages) |
+| `godot/` | Godot 4.7 project (Web preset → `../build/web/`) |
+| `build/web/` | Godot Web export output (CI / local; gitignored) |
 | `spec.txt` | Agent-maintained design spec |
 | `instructions.txt` | Freeform scratchpad |
 

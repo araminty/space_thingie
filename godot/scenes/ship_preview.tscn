@@ -1,0 +1,26 @@
+[gd_scene format=3 uid="uid://b77e11gl5rj53"]
+
+[ext_resource type="PackedScene" uid="uid://bscshipbasic01" path="res://scenes/ships/basic_spaceship.tscn" id="1_ship"]
+
+[sub_resource type="Environment" id="Environment_preview"]
+background_mode = 1
+background_color = Color(0.04, 0.05, 0.08, 1)
+ambient_light_source = 2
+ambient_light_color = Color(0.65, 0.7, 0.8, 1)
+ambient_light_energy = 0.45
+
+[node name="ShipPreview" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_preview")
+
+[node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.866025, -0.353553, 0.353553, 0, 0.707107, 0.707107, -0.5, -0.612372, 0.612372, 2, 3, 2)
+shadow_enabled = true
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(0.866025, -0.191342, 0.46194, 0, 0.92388, 0.382683, -0.5, -0.331414, 0.800103, 1.6, 1.0, 2.4)
+current = true
+fov = 45.0
+
+[node name="BasicSpaceship" parent="." instance=ExtResource("1_ship")]

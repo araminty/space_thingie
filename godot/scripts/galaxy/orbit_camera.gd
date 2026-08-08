@@ -1,6 +1,8 @@
 extends Node3D
-## Orbit / pan / zoom camera for galaxy (and later system) maps.
-## RMB orbit · MMB / WASD pan · Wheel zoom
+## Orbit / pan / zoom camera for galaxy and system maps.
+## Default (system): RMB orbit · MMB / WASD pan · Wheel zoom
+## Galaxy mode: set pan_on_rmb + rotate_on_mmb → RMB pan · MMB orbit · Wheel zoom
+## Uses _unhandled_input so fleet/star RMB orders (handled in _input) win first.
 
 @export var target: Vector3 = Vector3(0.86, 0.0, 0.86)
 @export var distance: float = 2.4
@@ -15,6 +17,10 @@ extends Node3D
 @export var wasd_speed: float = 0.85
 ## If true, WASD stays on the XZ plane (galaxy/system disk). If false, uses camera up.
 @export var pan_on_disk_plane: bool = true
+## Galaxy: RMB drag pans. System keeps false (RMB turntable).
+@export var pan_on_rmb: bool = false
+## Galaxy: MMB drag turntables. System keeps false (MMB pan).
+@export var rotate_on_mmb: bool = false
 
 var _camera: Camera3D
 var _orbiting := false
@@ -33,6 +39,12 @@ func set_focus(center: Vector3, region: float) -> void:
 		call_deferred("_apply")
 	else:
 		_apply()
+
+
+func set_view(center: Vector3, region: float, yaw: float, pitch: float) -> void:
+	yaw_deg = yaw
+	pitch_deg = clampf(pitch, 8.0, 89.0)
+	set_focus(center, region)
 
 
 func snapshot() -> Dictionary:
@@ -96,9 +108,15 @@ func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.button_index == MOUSE_BUTTON_RIGHT:
-			_orbiting = mb.pressed
+			if pan_on_rmb:
+				_panning = mb.pressed
+			else:
+				_orbiting = mb.pressed
 		elif mb.button_index == MOUSE_BUTTON_MIDDLE:
-			_panning = mb.pressed
+			if rotate_on_mmb:
+				_orbiting = mb.pressed
+			else:
+				_panning = mb.pressed
 		elif mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
 			distance = clampf(distance * (1.0 - zoom_sensitivity), min_distance, max_distance)
 			_apply()
@@ -114,9 +132,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif _panning:
 			var right := _camera.global_transform.basis.x
 			var up := _camera.global_transform.basis.y
-			var scale := distance * pan_sensitivity
-			target -= right * mm.relative.x * scale
-			target += up * mm.relative.y * scale
+			var pan_scale := distance * pan_sensitivity
+			target -= right * mm.relative.x * pan_scale
+			target += up * mm.relative.y * pan_scale
 			_apply()
 
 

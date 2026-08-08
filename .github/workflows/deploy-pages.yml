@@ -30,13 +30,28 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Build static site
-        run: python export_web.py
+      - name: Export Godot data
+        run: python export_godot.py
+
+      # Matches godot/project.godot config/features ("4.7").
+      # Action installs the engine binary + official export templates.
+      - name: Setup Godot
+        uses: solarlabyrinth/action-setup-godot@v2
+        with:
+          version: 4.7.1-stable
+          csharp: false
+
+      - name: Export Godot Web
+        run: |
+          mkdir -p build/web
+          godot --headless --path godot --import --quit
+          godot --headless --path godot --export-release "Web" "${GITHUB_WORKSPACE}/build/web/index.html"
+          touch build/web/.nojekyll
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site
+          path: build/web
 
   deploy:
     needs: build

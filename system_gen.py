@@ -12,6 +12,14 @@ from typing import Any, Callable
 import numpy as np
 from tqdm import tqdm
 
+from battle_sim import (
+    Side,
+    force_harbour_line,
+    force_lockbar_choke,
+    force_patrol_red,
+    force_rear_garrison,
+    force_veil_fall,
+)
 from system_view import (
     MU_SOLAR,
     AsteroidField,
@@ -25,7 +33,17 @@ from system_view import (
     draw_star_system,
 )
 
-CONTENTS_VERSION = 9
+CONTENTS_VERSION = 13
+## World-scale multipliers for ClassSheet size bands (on top of base ship scale).
+SIZE_SCALE: dict[str, float] = {
+    "H+": 2.4,
+    "H": 2.0,
+    "M": 1.35,
+    "L": 1.5,
+    "S": 0.65,
+}
+## Rank for formation lead (larger first). L > M matches visual size_scale.
+SIZE_RANK: dict[str, int] = {"H+": 5, "H": 4, "L": 3, "M": 2, "S": 1}
 ## Outer envelope used when rolling single-star planets (AU). Multi-star
 ## companions are separated by 1×–3× this distance.
 SINGLE_SYSTEM_LIMIT_AU = 16.0
@@ -288,6 +306,83 @@ def _content_radius_au(
     return float(r)
 
 
+def _ships_from_force(side: Side) -> list[dict[str, Any]]:
+    """Expand a battle_sim Side into per-hull ship dicts for system contents."""
+    ships: list[dict[str, Any]] = []
+    for unit in side.units:
+        sheet = unit.sheet
+        size = str(sheet.size)
+        for k in range(int(unit.count)):
+            ships.append(
+                {
+                    "name": f"{sheet.name}-{k + 1}",
+                    "class": sheet.name,
+                    "hull": sheet.hull,
+                    "size": size,
+                    "size_scale": float(SIZE_SCALE.get(size, 1.0)),
+                    "template": "basic_spaceship",
+                    "offset": [0.0, 0.0, 0.0],
+                }
+            )
+    _layout_fleet_offsets(ships)
+    return ships
+
+
+def _layout_fleet_offsets(
+    ships: list[dict[str, Any]], spacing: float = 0.0035
+) -> None:
+    """Assign tight formation offsets in-place (AU). Larger ships lead (front rows)."""
+    if not ships:
+        return
+    order = sorted(
+        range(len(ships)),
+        key=lambda i: (-SIZE_RANK.get(str(ships[i].get("size", "")), 0), i),
+    )
+    n = len(ships)
+    cols = min(4, max(1, int(math.ceil(math.sqrt(n)))))
+    for place, idx in enumerate(order):
+        row = place // cols
+        col_in_row = place % cols
+        row_start = row * cols
+        row_count = min(cols, n - row_start)
+        x = (col_in_row - (row_count - 1) * 0.5) * spacing
+        z = float(row) * spacing
+        ships[idx]["offset"] = [float(x), 0.0, z]
+
+
+def _fleet_from_side(
+    side: Side,
+    *,
+    orbital_radius: float = 1.0,
+    phase0: float = 0.0,
+    inclination: float = 0.015,
+    hostile: bool = False,
+    stationary: bool = False,
+    position: list[float] | None = None,
+) -> dict[str, Any]:
+    fleet: dict[str, Any] = {
+        "name": side.name,
+        "host_star": 0,
+        "faction": side.faction,
+        "role": side.doctrine,
+        "ships": _ships_from_force(side),
+    }
+    if hostile:
+        fleet["hostile"] = True
+    if stationary and position is not None:
+        px, py, pz = float(position[0]), float(position[1]), float(position[2])
+        fleet["stationary"] = True
+        fleet["position"] = [px, py, pz]
+        fleet["orbital_radius"] = float(math.hypot(px, pz))
+        fleet["phase0"] = 0.0
+        fleet["inclination"] = 0.0
+    else:
+        fleet["orbital_radius"] = float(orbital_radius)
+        fleet["phase0"] = float(phase0)
+        fleet["inclination"] = float(inclination)
+    return fleet
+
+
 def _sol_system_body(
     *,
     star_index: int,
@@ -428,6 +523,38 @@ def _sol_system_body(
             "mu": float(MU_SOLAR),
         }
     ]
+    # Battle-sim forces in Sol. Shared basic_spaceship mesh; size_scale from
+    # ClassSheet size band. Friendly + hostile fleets get zoom-inset flags.
+    fleets = [
+        _fleet_from_side(
+            force_rear_garrison(),
+            orbital_radius=1.0,
+            phase0=float(rng.uniform(0.0, 2.0 * math.pi)),
+        ),
+        _fleet_from_side(
+            force_patrol_red(),
+            orbital_radius=1.52,
+            phase0=float(rng.uniform(0.0, 2.0 * math.pi)),
+        ),
+        _fleet_from_side(
+            force_lockbar_choke(),
+            orbital_radius=2.8,
+            phase0=float(rng.uniform(0.0, 2.0 * math.pi)),
+        ),
+        # Compact line between belt and Jupiter (cis-Jovian).
+        _fleet_from_side(
+            force_harbour_line(),
+            orbital_radius=4.0,
+            phase0=float(rng.uniform(0.0, 2.0 * math.pi)),
+        ),
+        # Choir swarm beyond Jupiter (~5.2 AU); fixed disk pose, unselectable.
+        _fleet_from_side(
+            force_veil_fall(),
+            hostile=True,
+            stationary=True,
+            position=[6.2, 0.0, 1.1],
+        ),
+    ]
     content_r = _content_radius_au(stars, planets, fields)
     ring_r = float(max(content_r * 1.18, 36.0))
     hyperlanes = _place_hyperlanes(
@@ -449,6 +576,7 @@ def _sol_system_body(
         "stars": stars,
         "planets": planets,
         "asteroid_fields": fields,
+        "fleets": fleets,
         "hyperlanes": hyperlanes,
     }
 
