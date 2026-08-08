@@ -16,9 +16,22 @@ python starmap.py --serve   # click stars to open systems
 Godot data:
 
 ```bash
-python export_godot.py
+python starmap.py        # optional: build local map + cache/
+python export_godot.py   # uses cache/; generates it if missing (CI / first run)
 # then open godot/ in Godot 4
 ```
+
+### Optional: commit map cache for fast CI
+
+`export_godot.py` auto-generates `cache/` when missing (safety net for fresh clones / CI). To make Pages **fast** and match your local galaxy, commit the trackable cache files after a local `starmap.py` (or export):
+
+```bash
+git add cache/positions.npz cache/map_state.npz cache/system_contents.json
+```
+
+Those three are enough for `load_map_state` + `ensure_system_contents`. Per-system HTML under `cache/systems/` stays ignored. With them in the repo, CI’s `python export_godot.py` loads the cache instead of regenerating.
+
+Approximate local sizes (current galaxy): `positions.npz` ~50 KB, `map_state.npz` ~100 KB, `system_contents.json` ~8 MB. The JSON dominates; only commit it if you want CI to skip system-content regen and pin the same systems.
 
 ## Publish online (GitHub Pages)
 
@@ -27,7 +40,7 @@ Pages serves the **Godot Web** export (not the Plotly `export_web.py` site).
 1. Push to GitHub (`main` or `master`).
 2. Repo **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 3. The workflow [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml):
-   - runs `python export_godot.py` (refreshes `godot/data/`)
+   - runs `python export_godot.py` (loads committed `cache/` if present, else generates, then refreshes `godot/data/`)
    - installs Godot **4.7.1** + export templates
    - exports preset **Web** → `build/web/`
    - deploys that folder with `actions/deploy-pages`
@@ -61,6 +74,7 @@ python -m http.server -d build/web 8080
 | `system_gen.py` / `system_view.py` | Per-system contents + HTML views |
 | `export_godot.py` | JSON/NPZ for the Godot client (`godot/data/`) |
 | `export_web.py` | Optional Plotly static site (`site/`; not Pages) |
+| `cache/` | Map cache (`positions.npz`, `map_state.npz`, `system_contents.json` optionally committed) |
 | `godot/` | Godot 4.7 project (Web preset → `../build/web/`) |
 | `build/web/` | Godot Web export output (CI / local; gitignored) |
 | `spec.txt` | Agent-maintained design spec |

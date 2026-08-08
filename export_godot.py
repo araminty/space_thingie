@@ -21,9 +21,14 @@ from starmap import (
     ROOT_DIR,
     StarmapConfig,
     _star_display,
+    generate_positions,
+    generate_starmap,
     lane_paint,
     load_map_state,
+    load_positions,
     prepare_trade,
+    save_map_state,
+    save_positions,
     _green_counting_stars,
 )
 from system_gen import CONTENTS_VERSION, contents_path, ensure_system_contents
@@ -143,11 +148,28 @@ def export_systems(sm, cfg: StarmapConfig) -> Path:
     return out
 
 
+def _ensure_map(cfg: StarmapConfig):
+    """Load map cache, or generate + save it (same pattern as export_web)."""
+    sm = load_map_state(cfg)
+    if sm is not None:
+        return sm
+    print(
+        "No map cache found; generating starmap "
+        f"(seed={cfg.seed}, n_stars={cfg.n_stars})…"
+    )
+    stars = load_positions(cfg)
+    if stars is None:
+        stars = generate_positions(cfg)
+        save_positions(stars, cfg)
+    sm = generate_starmap(cfg, stars=stars)
+    save_map_state(sm, cfg)
+    print(f"Map cache written → {CACHE_DIR}")
+    return sm
+
+
 def export_galaxy(cfg: StarmapConfig | None = None) -> Path:
     cfg = cfg or StarmapConfig()
-    sm = load_map_state(cfg)
-    if sm is None:
-        raise SystemExit("No usable map cache; run starmap.py (or --reclassify) first.")
+    sm = _ensure_map(cfg)
 
     # Named homeworlds (trade seeds) before systems so Sol/Brightstep match.
     prepare_trade(sm, cfg)
