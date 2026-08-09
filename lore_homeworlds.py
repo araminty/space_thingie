@@ -190,7 +190,7 @@ LORE_HOMEWORLDS: list[LoreHomeworld] = [
     {
         "key": "redactsound",
         "map_label": "Redactsound",
-        "culture": "Blank Song",
+        "culture": "Cah'Zee",
         "world": "Redactsound",
     },
     {

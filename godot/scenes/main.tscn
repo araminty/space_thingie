@@ -91,8 +91,8 @@ script = ExtResource("4_system")
 [node name="TimeHud" type="Control" parent="UI"]
 layout_mode = 3
 anchors_preset = 0
-offset_right = 560.0
-offset_bottom = 48.0
+offset_right = 660.0
+offset_bottom = 72.0
 mouse_filter = 2
 
 [node name="PlayButton" type="Button" parent="UI/TimeHud"]
@@ -152,7 +152,7 @@ text = "8×"
 custom_minimum_size = Vector2(34, 0)
 layout_mode = 2
 focus_mode = 0
-text = "16×"
+text = "32×"
 
 [node name="DayLabel" type="Label" parent="UI/TimeHud"]
 layout_mode = 0
@@ -164,10 +164,29 @@ theme_override_colors/font_color = Color(0.78, 0.86, 0.95, 0.95)
 theme_override_font_sizes/font_size = 14
 text = "day 0  00:00"
 
+[node name="FogButton" type="Button" parent="UI/TimeHud"]
+layout_mode = 0
+offset_left = 548.0
+offset_top = 10.0
+offset_right = 648.0
+offset_bottom = 42.0
+focus_mode = 0
+text = "FOW: On"
+
+[node name="ScientistLabel" type="Label" parent="UI/TimeHud"]
+layout_mode = 0
+offset_left = 12.0
+offset_top = 44.0
+offset_right = 420.0
+offset_bottom = 68.0
+theme_override_colors/font_color = Color(0.78, 0.86, 0.95, 0.9)
+theme_override_font_sizes/font_size = 13
+text = "Scientists 3/3 free"
+
 [node name="GalaxyHud" type="Label" parent="UI"]
-offset_left = 550.0
+offset_left = 660.0
 offset_top = 14.0
-offset_right = 1600.0
+offset_right = 1700.0
 offset_bottom = 42.0
 theme_override_colors/font_color = Color(0.78, 0.86, 0.95, 0.9)
 theme_override_colors/font_shadow_color = Color(0, 0, 0, 0.7)
@@ -189,9 +208,9 @@ mouse_filter = 2
 visible = false
 layout_mode = 0
 offset_left = 12.0
-offset_top = 52.0
+offset_top = 76.0
 offset_right = 332.0
-offset_bottom = 430.0
+offset_bottom = 454.0
 theme_override_styles/panel = SubResource("StyleBox_panel")
 
 [node name="Margin" type="MarginContainer" parent="UI/GalaxyFleetPanel"]

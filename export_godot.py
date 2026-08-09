@@ -20,6 +20,7 @@ from starmap import (
     CACHE_DIR,
     ROOT_DIR,
     StarmapConfig,
+    _lane_edge_cost,
     _star_display,
     generate_positions,
     generate_starmap,
@@ -250,22 +251,28 @@ def export_galaxy(cfg: StarmapConfig | None = None) -> Path:
         stars_out.append(entry)
 
     lanes_out: list[dict] = []
-    for (a, b), paint, unlocked, same_anc, home_spur in zip(
-        sm.lanes,
-        paints,
-        sm.lane_unlocked,
-        sm.lane_same_ancient_beltway,
-        sm.lane_home_spur,
+    for li, ((a, b), paint, unlocked, same_anc, home_spur) in enumerate(
+        zip(
+            sm.lanes,
+            paints,
+            sm.lane_unlocked,
+            sm.lane_same_ancient_beltway,
+            sm.lane_home_spur,
+        )
     ):
         col = LANE_COLORS.get(paint, "#888888")
+        # Map-gen `unlocked` is not travel authority (scientists / start seed are).
+        # Keep it for reference; Godot travel uses GameState.lane_unlocked.
         lanes_out.append(
             {
+                "id": int(li),
                 "a": int(a),
                 "b": int(b),
                 "paint": paint,
                 "color": col,
                 "rgba": _hex_to_rgba01(col),
                 "width": float(LANE_WIDTH.get(paint, 1.5)),
+                "cost": float(_lane_edge_cost(paint)),
                 "unlocked": bool(unlocked),
                 "same_ancient": bool(same_anc),
                 "home_spur": bool(home_spur),

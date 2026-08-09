@@ -9,12 +9,16 @@ signal play_speed_changed(speed: float)
 signal fleets_changed
 signal battles_changed
 signal fleet_selection_changed(fleet_id: String)
+signal fog_changed(enabled: bool)
+signal exploration_changed(faction: String)
+signal lane_unlocks_changed
+signal scientists_changed
 
 ## 48 half-hours per day; play advances at prior rate / 48.
 const HALF_HOURS_PER_DAY := 48.0
 const DAYS_PER_SECOND := 24.0 / HALF_HOURS_PER_DAY  # 0.5 days/sec at 1×
-## Multipliers relative to DAYS_PER_SECOND (¼× … 16×).
-const PLAY_SPEEDS: Array[float] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0]
+## Multipliers relative to DAYS_PER_SECOND (¼× … 32×).
+const PLAY_SPEEDS: Array[float] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 32.0]
 const HYPERLANE_TRAVEL_DAYS := 28.0
 ## Edge-to-edge (diameter) crossing time at fleet cruise speed (matches SystemView).
 const FLEET_CROSSING_DAYS := 20.0
@@ -41,8 +45,31 @@ var day: float = 0.0
 var playing: bool = false
 ## Wall-clock multiplier on DAYS_PER_SECOND while playing (default 1×).
 var play_speed: float = 1.0
-## Fog of war: empty = all systems open; else 1 = revealed. Set by galaxy map.
+## Viewing faction for terra incognita / FOW (player map).
+const PLAYER_FACTION := "player"
+const FACTION_KIND_NORMAL := "normal"
+const FACTION_KIND_ANCIENT := "ancient"
+const FACTION_KIND_NOMAD := "nomad"
+## Shared scientist unlocks at game start (home↔home from Sol outward).
+const START_UNLOCKED_LANES := 5
+const SCIENTIST_SLOTS := 3
+const DAYS_PER_YEAR := 365.0
+## Trade edge cost for home paint; unlock days = DAYS_PER_YEAR * cost / this.
+const HOME_LANE_COST := 3.0
+## When true, unexplored stars are fogged on the galaxy map.
+var fog_enabled: bool = true
+## faction_id → PackedByteArray (1 = explored by that faction). Empty mask = none.
+var explored_by: Dictionary = {}
+## Alias of explored_by[PLAYER_FACTION] for older call sites; prefer is_explored.
 var discovered: PackedByteArray = PackedByteArray()
+## Shared among normal empires: 1 = unlocked for travel.
+var lane_unlocked: PackedByteArray = PackedByteArray()
+## Active scientist projects: {lane_id, done_day, duration_days, faction}.
+var scientist_projects: Array = []
+## Waiting unlock requests (FIFO): {lane_id, faction}. Shown as numbered markers.
+var scientist_queue: Array = []
+## Paused unlock progress per lane (0..1 complete). Cleared on finish.
+var lane_unlock_progress: Dictionary = {}
 ## Live fleets keyed by id. See register_fleet / begin_hyperlane_transit.
 ## Optional fields: ordered, dest_x/z, pursue_fleet_id, orbiting, engaged, battle_id,
 ##   route (Array of system_cruise / hyperlane hops),
@@ -68,6 +95,7 @@ func _process(delta: float) -> void:
 	if not playing:
 		return
 	day += DAYS_PER_SECOND * play_speed * delta
+	_tick_scientists()
 	_tick_fleet_arrivals()
 	_tick_system_fleet_motion()
 	_tick_proximity_battles_all()
@@ -117,17 +145,86 @@ func cycle_play_speed(dir: int) -> void:
 	set_play_speed(PLAY_SPEEDS[idx])
 
 
-func is_discovered(star_id: int) -> bool:
-	if discovered.is_empty():
-		return true
-	if star_id < 0 or star_id >= discovered.size():
+func set_fog_enabled(value: bool) -> void:
+	if fog_enabled == value:
+		return
+	fog_enabled = value
+	fog_changed.emit(fog_enabled)
+
+
+func toggle_fog() -> void:
+	set_fog_enabled(not fog_enabled)
+
+
+func init_exploration(faction: String, mask: PackedByteArray) -> void:
+	## Seed a faction's explored set (e.g. Sol home + hops at game start).
+	var copy := mask.duplicate()
+	explored_by[faction] = copy
+	if faction == PLAYER_FACTION:
+		discovered = copy
+	exploration_changed.emit(faction)
+
+
+func is_explored(star_id: int, faction: String = PLAYER_FACTION) -> bool:
+	if not explored_by.has(faction):
 		return false
-	return discovered[star_id] != 0
+	var mask: PackedByteArray = explored_by[faction]
+	if mask.is_empty():
+		return false
+	if star_id < 0 or star_id >= mask.size():
+		return false
+	return mask[star_id] != 0
+
+
+func explore_star(star_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Mark system explored for faction. Returns true if newly explored.
+	if star_id < 0:
+		return false
+	if not explored_by.has(faction):
+		explored_by[faction] = PackedByteArray()
+	var mask: PackedByteArray = explored_by[faction]
+	if star_id >= mask.size():
+		var old_n := mask.size()
+		mask.resize(star_id + 1)
+		for i in range(old_n, mask.size()):
+			mask[i] = 0
+	if mask[star_id] != 0:
+		explored_by[faction] = mask
+		if faction == PLAYER_FACTION:
+			discovered = mask
+		return false
+	mask[star_id] = 1
+	explored_by[faction] = mask
+	if faction == PLAYER_FACTION:
+		discovered = mask
+	exploration_changed.emit(faction)
+	# Newly seen lanes may unblock queued unlocks waiting for visibility.
+	_fill_scientist_slots_from_queue()
+	return true
+
+
+func explored_count(faction: String = PLAYER_FACTION) -> int:
+	if not explored_by.has(faction):
+		return 0
+	var mask: PackedByteArray = explored_by[faction]
+	var n := 0
+	for i in mask.size():
+		if mask[i] != 0:
+			n += 1
+	return n
+
+
+func is_discovered(star_id: int) -> bool:
+	## Interactable under current FOW: all stars if fog off, else player-explored.
+	if not fog_enabled:
+		return true
+	return is_explored(star_id, PLAYER_FACTION)
 
 
 func enter_system(star_id: int) -> void:
 	if not is_discovered(star_id):
 		return
+	explore_star(star_id, PLAYER_FACTION)
 	current_star_id = star_id
 	last_system_id = star_id
 	in_system = true
@@ -138,6 +235,425 @@ func return_to_galaxy() -> void:
 	in_system = false
 	current_star_id = -1
 	returned_to_galaxy.emit()
+
+
+## --- Hyperlane unlock / scientists -----------------------------------------
+
+
+func init_hyperlanes_from_galaxy(data: GalaxyData) -> void:
+	## Seed Sol explored + START_UNLOCKED_LANES home↔home unlocks. Call once at map load.
+	_galaxy_data = data
+	var n_stars := data.stars.size()
+	var n_lanes := data.lanes.size()
+	lane_unlocked = PackedByteArray()
+	lane_unlocked.resize(n_lanes)
+	lane_unlocked.fill(0)
+	scientist_projects.clear()
+	scientist_queue.clear()
+	lane_unlock_progress.clear()
+	var mask := PackedByteArray()
+	mask.resize(n_stars)
+	mask.fill(0)
+	explored_by[PLAYER_FACTION] = mask
+	discovered = mask
+	var sol_id := data.sol_star_id()
+	if sol_id >= 0:
+		explore_star(sol_id, PLAYER_FACTION)
+	var seed_lanes := data.pick_starting_home_lanes(START_UNLOCKED_LANES)
+	for li in seed_lanes:
+		_apply_lane_unlock(int(li), PLAYER_FACTION, false)
+	lane_unlocks_changed.emit()
+	scientists_changed.emit()
+	exploration_changed.emit(PLAYER_FACTION)
+
+
+func is_lane_unlocked(lane_id: int) -> bool:
+	if lane_id < 0 or lane_id >= lane_unlocked.size():
+		return false
+	return lane_unlocked[lane_id] != 0
+
+
+func unlocked_lane_count() -> int:
+	var n := 0
+	for i in lane_unlocked.size():
+		if lane_unlocked[i] != 0:
+			n += 1
+	return n
+
+
+func is_lane_seen(lane_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Seen when either endpoint is explored (unlock status visible from system).
+	_ensure_map_data()
+	if _galaxy_data == null or lane_id < 0 or lane_id >= _galaxy_data.lanes.size():
+		return false
+	var lane: Dictionary = _galaxy_data.lanes[lane_id]
+	var a := int(lane.get("a", -1))
+	var b := int(lane.get("b", -1))
+	return is_explored(a, faction) or is_explored(b, faction)
+
+
+func unlock_duration_days(lane_id: int) -> float:
+	_ensure_map_data()
+	if _galaxy_data == null:
+		return DAYS_PER_YEAR
+	# Home↔home (both HOME tier): one year. Else scale by trade edge cost.
+	if _galaxy_data.is_home_home_lane(lane_id):
+		return DAYS_PER_YEAR
+	var cost := _galaxy_data.lane_cost(lane_id)
+	return DAYS_PER_YEAR * cost / HOME_LANE_COST
+
+
+func scientists_busy() -> int:
+	return scientist_projects.size()
+
+
+func scientists_free() -> int:
+	return maxi(SCIENTIST_SLOTS - scientist_projects.size(), 0)
+
+
+func is_scientist_working_lane(lane_id: int) -> bool:
+	for p in scientist_projects:
+		if int(p.get("lane_id", -1)) == lane_id:
+			return true
+	return false
+
+
+func is_lane_queued(lane_id: int) -> bool:
+	return scientist_queue_position(lane_id) > 0
+
+
+func scientist_queue_position(lane_id: int) -> int:
+	## 1-based index in the waiting queue, or 0 if not queued.
+	for i in scientist_queue.size():
+		if int(scientist_queue[i].get("lane_id", -1)) == lane_id:
+			return i + 1
+	return 0
+
+
+func can_request_scientist(lane_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Eligible to queue (or start). Unseen lanes may be queued; they will not
+	## begin until seen. Does not require a free scientist.
+	if lane_id < 0:
+		return false
+	if is_lane_unlocked(lane_id):
+		return false
+	if is_scientist_working_lane(lane_id):
+		return false
+	if is_lane_queued(lane_id):
+		return false
+	_ensure_map_data()
+	if _galaxy_data == null or lane_id >= _galaxy_data.lanes.size():
+		return false
+	return true
+
+
+func can_start_scientist_unlock(lane_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Ready to begin work now: requestable state + at least one end explored.
+	if is_lane_unlocked(lane_id) or is_scientist_working_lane(lane_id):
+		return false
+	_ensure_map_data()
+	if _galaxy_data == null or lane_id < 0 or lane_id >= _galaxy_data.lanes.size():
+		return false
+	return is_lane_seen(lane_id, faction)
+
+
+func can_assign_scientist(lane_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Free scientist available and lane eligible to start immediately.
+	return (
+		scientists_free() > 0
+		and can_request_scientist(lane_id, faction)
+		and can_start_scientist_unlock(lane_id, faction)
+	)
+
+
+func request_scientist_unlock(lane_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Start now if free + seen; otherwise append to the queue (including unseen).
+	## Unseen queue entries are skipped until seen; the first seen job jumps ahead.
+	if not can_request_scientist(lane_id, faction):
+		return false
+	if scientists_free() > 0 and can_start_scientist_unlock(lane_id, faction):
+		return _start_scientist_project(lane_id, faction)
+	scientist_queue.append({"lane_id": lane_id, "faction": faction})
+	scientists_changed.emit()
+	# Free scientists may still pick up a later seen job ahead of this unseen one.
+	if scientists_free() > 0:
+		_fill_scientist_slots_from_queue()
+	return true
+
+
+func assign_scientist(lane_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Back-compat: queue-or-start.
+	return request_scientist_unlock(lane_id, faction)
+
+
+func _start_scientist_project(lane_id: int, faction: String) -> bool:
+	if not can_start_scientist_unlock(lane_id, faction):
+		return false
+	if scientists_free() <= 0:
+		return false
+	var dur := unlock_duration_days(lane_id)
+	var done_frac := clampf(float(lane_unlock_progress.get(lane_id, 0.0)), 0.0, 0.999)
+	var remaining := dur * (1.0 - done_frac)
+	scientist_projects.append({
+		"lane_id": lane_id,
+		"done_day": day + remaining,
+		"duration_days": dur,
+		"faction": faction,
+	})
+	scientists_changed.emit()
+	return true
+
+
+func _fill_scientist_slots_from_queue() -> void:
+	## Promote the first *seen* queued unlock into each free slot. Unseen entries
+	## stay in place; later seen jobs jump ahead of them for work assignment.
+	_ensure_map_data()
+	var changed := false
+	while scientists_free() > 0 and not scientist_queue.is_empty():
+		var idx := -1
+		for i in scientist_queue.size():
+			var job: Dictionary = scientist_queue[i]
+			var lid := int(job.get("lane_id", -1))
+			var fac := String(job.get("faction", PLAYER_FACTION))
+			if lid < 0 or is_lane_unlocked(lid) or is_scientist_working_lane(lid):
+				# Stale — drop.
+				scientist_queue.remove_at(i)
+				changed = true
+				idx = -2  # signal restart scan
+				break
+			if can_start_scientist_unlock(lid, fac):
+				idx = i
+				break
+		if idx == -2:
+			continue
+		if idx < 0:
+			break  # only unseen (or nothing startable) left
+		var start_job: Dictionary = scientist_queue[idx]
+		scientist_queue.remove_at(idx)
+		var lid2 := int(start_job.get("lane_id", -1))
+		var fac2 := String(start_job.get("faction", PLAYER_FACTION))
+		var dur := unlock_duration_days(lid2)
+		var done_frac := clampf(float(lane_unlock_progress.get(lid2, 0.0)), 0.0, 0.999)
+		var remaining := dur * (1.0 - done_frac)
+		scientist_projects.append({
+			"lane_id": lid2,
+			"done_day": day + remaining,
+			"duration_days": dur,
+			"faction": fac2,
+		})
+		changed = true
+	if changed:
+		scientists_changed.emit()
+
+
+func pause_scientist(lane_id: int) -> bool:
+	## Stop active work on this lane, free the scientist, keep progress; promote queue.
+	for i in scientist_projects.size():
+		var p: Dictionary = scientist_projects[i]
+		if int(p.get("lane_id", -1)) != lane_id:
+			continue
+		var dur := float(p.get("duration_days", unlock_duration_days(lane_id)))
+		dur = maxf(dur, 0.001)
+		var left := maxf(float(p.get("done_day", day)) - day, 0.0)
+		var prog := 1.0 - left / dur
+		lane_unlock_progress[lane_id] = clampf(prog, 0.0, 1.0)
+		scientist_projects.remove_at(i)
+		_fill_scientist_slots_from_queue()
+		scientists_changed.emit()
+		return true
+	return false
+
+
+func promote_scientist_queue(lane_id: int, faction: String = PLAYER_FACTION) -> bool:
+	## Move lane to the front of the unlock queue (insert if not queued).
+	## Seen jobs at front may start immediately via fill.
+	if lane_id < 0 or is_lane_unlocked(lane_id) or is_scientist_working_lane(lane_id):
+		return false
+	_ensure_map_data()
+	if _galaxy_data == null or lane_id >= _galaxy_data.lanes.size():
+		return false
+	var fac := faction
+	var found := false
+	for i in scientist_queue.size():
+		if int(scientist_queue[i].get("lane_id", -1)) != lane_id:
+			continue
+		fac = String(scientist_queue[i].get("faction", faction))
+		scientist_queue.remove_at(i)
+		found = true
+		break
+	if not found and not can_request_scientist(lane_id, faction):
+		return false
+	scientist_queue.push_front({"lane_id": lane_id, "faction": fac})
+	scientists_changed.emit()
+	_fill_scientist_slots_from_queue()
+	return true
+
+
+func cancel_scientist_queue(lane_id: int) -> bool:
+	## Remove a waiting unlock; later queue entries bump forward (renumber).
+	for i in scientist_queue.size():
+		if int(scientist_queue[i].get("lane_id", -1)) != lane_id:
+			continue
+		scientist_queue.remove_at(i)
+		scientists_changed.emit()
+		return true
+	return false
+
+
+func cancel_or_pause_scientist(lane_id: int) -> bool:
+	## RMB on marker: pause active work, or cancel a queued unlock.
+	if pause_scientist(lane_id):
+		return true
+	return cancel_scientist_queue(lane_id)
+
+
+func scientist_progress(lane_id: int) -> float:
+	## 0..1 completion for an active or paused unlock. 0 if never started.
+	for p in scientist_projects:
+		if int(p.get("lane_id", -1)) != lane_id:
+			continue
+		var dur := float(p.get("duration_days", unlock_duration_days(lane_id)))
+		dur = maxf(dur, 0.001)
+		var left := maxf(float(p.get("done_day", day)) - day, 0.0)
+		return clampf(1.0 - left / dur, 0.0, 1.0)
+	return clampf(float(lane_unlock_progress.get(lane_id, 0.0)), 0.0, 1.0)
+
+
+func _tick_scientists() -> void:
+	if scientist_projects.is_empty() and scientist_queue.is_empty():
+		return
+	var remaining: Array = []
+	var any_done := false
+	for p in scientist_projects:
+		var lid := int(p.get("lane_id", -1))
+		if day + 1e-9 >= float(p.get("done_day", INF)):
+			lane_unlock_progress.erase(lid)
+			_remove_lane_from_scientist_queue(lid)
+			_apply_lane_unlock(lid, String(p.get("faction", PLAYER_FACTION)), true)
+			any_done = true
+		else:
+			remaining.append(p)
+	if any_done:
+		scientist_projects = remaining
+		_fill_scientist_slots_from_queue()
+		scientists_changed.emit()
+		lane_unlocks_changed.emit()
+
+
+func _remove_lane_from_scientist_queue(lane_id: int) -> void:
+	var next: Array = []
+	for job in scientist_queue:
+		if int(job.get("lane_id", -1)) != lane_id:
+			next.append(job)
+	scientist_queue = next
+
+
+func _apply_lane_unlock(lane_id: int, faction: String, explore_far: bool) -> void:
+	if lane_id < 0:
+		return
+	_ensure_map_data()
+	if _galaxy_data == null or lane_id >= _galaxy_data.lanes.size():
+		return
+	if lane_id >= lane_unlocked.size():
+		var old_n := lane_unlocked.size()
+		lane_unlocked.resize(lane_id + 1)
+		for i in range(old_n, lane_unlocked.size()):
+			lane_unlocked[i] = 0
+	lane_unlocked[lane_id] = 1
+	if not explore_far:
+		# Start seed: explore both ends (Sol already explored; far end new).
+		var lane0: Dictionary = _galaxy_data.lanes[lane_id]
+		explore_star(int(lane0.get("a", -1)), faction)
+		explore_star(int(lane0.get("b", -1)), faction)
+		return
+	var lane: Dictionary = _galaxy_data.lanes[lane_id]
+	var a := int(lane.get("a", -1))
+	var b := int(lane.get("b", -1))
+	var a_ex := is_explored(a, faction)
+	var b_ex := is_explored(b, faction)
+	if a_ex and not b_ex:
+		explore_star(b, faction)
+	elif b_ex and not a_ex:
+		explore_star(a, faction)
+	elif not a_ex and not b_ex:
+		explore_star(a, faction)
+		explore_star(b, faction)
+
+
+func travel_mask_for_kind(faction_kind: String) -> PackedByteArray:
+	## Lane mask for BFS pathing. Empty mask means "all lanes" (ancients).
+	_ensure_map_data()
+	if _galaxy_data == null:
+		return lane_unlocked.duplicate()
+	if faction_kind == FACTION_KIND_ANCIENT:
+		return PackedByteArray()  # all geometric lanes
+	var n := _galaxy_data.lanes.size()
+	var mask := PackedByteArray()
+	mask.resize(n)
+	mask.fill(0)
+	for li in n:
+		if is_lane_unlocked(li):
+			mask[li] = 1
+			continue
+		if faction_kind == FACTION_KIND_NOMAD and _galaxy_data.is_beltway_or_home_paint(li):
+			mask[li] = 1
+	return mask
+
+
+func can_travel_lane(lane_id: int, faction_kind: String = FACTION_KIND_NORMAL) -> bool:
+	if faction_kind == FACTION_KIND_ANCIENT:
+		return true
+	if is_lane_unlocked(lane_id):
+		return true
+	if faction_kind == FACTION_KIND_NOMAD:
+		_ensure_map_data()
+		return _galaxy_data != null and _galaxy_data.is_beltway_or_home_paint(lane_id)
+	return false
+
+
+func can_travel_between(from_star: int, to_star: int, faction_kind: String = FACTION_KIND_NORMAL) -> bool:
+	_ensure_map_data()
+	if _galaxy_data == null:
+		return false
+	var li := _galaxy_data.find_lane(from_star, to_star)
+	if li < 0:
+		return false
+	return can_travel_lane(li, faction_kind)
+
+
+func shortest_travel_path(
+	from_star: int, to_star: int, faction_kind: String = FACTION_KIND_NORMAL
+) -> PackedInt32Array:
+	## BFS using only lanes the faction may travel right now.
+	_ensure_map_data()
+	if _galaxy_data == null:
+		return PackedInt32Array()
+	return _galaxy_data.shortest_path(from_star, to_star, travel_mask_for_kind(faction_kind))
+
+
+func shortest_lane_path(from_star: int, to_star: int) -> PackedInt32Array:
+	## Geometric BFS on all lanes (ignores lock). Multi-hop orders use this;
+	## fleets cruise to locked gates and wait until those lanes unlock.
+	_ensure_map_data()
+	if _galaxy_data == null:
+		return PackedInt32Array()
+	return _galaxy_data.shortest_path(from_star, to_star, PackedByteArray())
+
+
+func fleet_waiting_lane_unlock(fleet_id: String) -> bool:
+	## True when in-system with a routed next hop whose lane is still locked.
+	if not fleets.has(fleet_id):
+		return false
+	var f: Dictionary = fleets[fleet_id]
+	if String(f.get("status", "")) != "in_system":
+		return false
+	var dest := route_next_hyperlane_dest(fleet_id)
+	if dest < 0:
+		return false
+	var sys := int(f.get("system_id", -1))
+	if sys < 0:
+		return false
+	return not can_travel_between(sys, dest, FACTION_KIND_NORMAL)
 
 
 func day_label_text() -> String:
@@ -371,9 +887,17 @@ func _tick_system_fleet_motion() -> void:
 			continue
 		if Vector3(nx, 0.0, nz).distance_to(Vector3(dx, 0.0, dz)) <= FLEET_ARRIVE_EPS_AU:
 			# At cruise dest: start routed hyperlane, else clear/pop cruise.
+			# Locked next hop / entry cooldown: stay ordered at portal and retry.
 			var route_dest := route_next_hyperlane_dest(fid)
 			if route_dest >= 0:
-				begin_hyperlane_transit(fid, sys, route_dest)
+				if can_travel_between(sys, route_dest, FACTION_KIND_NORMAL) \
+						and can_begin_hyperlane_transit(fid):
+					begin_hyperlane_transit(fid, sys, route_dest)
+				else:
+					# Waiting for unlock and/or entry cooldown — hold at portal.
+					f["ordered"] = true
+					f["dest_x"] = dx
+					f["dest_z"] = dz
 			else:
 				on_fleet_reached_disk_dest(fid)
 	if emit_change:
@@ -458,7 +982,14 @@ func _try_enter_portal_at(fleet_id: String, f: Dictionary, pos: Vector3) -> bool
 	if dest < 0:
 		return false
 	var route_dest := route_next_hyperlane_dest(fleet_id)
+	# With an active multi-hop route, only enter the hop we are routed for.
 	if route_dest >= 0 and route_dest != dest:
+		return false
+	# If routed into a locked lane, do not enter — wait at the portal.
+	if route_dest >= 0 and not can_travel_between(sys, dest, FACTION_KIND_NORMAL):
+		return false
+	# Without a route, only enter unlocked lanes (no accidental locked jumps).
+	if route_dest < 0 and not can_travel_between(sys, dest, FACTION_KIND_NORMAL):
 		return false
 	return begin_hyperlane_transit(fleet_id, sys, dest)
 
@@ -504,7 +1035,10 @@ func order_fleet_path_to_star(fleet_id: String, target_star: int) -> bool:
 	## Multi-hop lane path to target_star. In-system: from current system.
 	## Mid-transit A→B: pick continue-to-B vs reverse-to-A by fractional
 	## lane cost + BFS hops, then queue route from the chosen end to D.
-	## Clears pursue / prior route. Final waypoint = arrival-inward pose.
+	## Path is geometric (all lanes). Locked hops: fleet flies to the portal
+	## and waits until the lane unlocks, then continues. Clears pursue / prior
+	## route. Final waypoint = arrival-inward pose.
+	## Destination need not be explored yet (arrival / unlock explores).
 	if not fleets.has(fleet_id):
 		return false
 	var f: Dictionary = fleets[fleet_id]
@@ -515,7 +1049,7 @@ func order_fleet_path_to_star(fleet_id: String, target_star: int) -> bool:
 	if target_star < 0:
 		return false
 	_ensure_map_data()
-	if not is_discovered(target_star):
+	if _galaxy_data == null or target_star >= _galaxy_data.stars.size():
 		return false
 	var status := String(f.get("status", ""))
 	if status == "in_transit":
@@ -525,7 +1059,7 @@ func order_fleet_path_to_star(fleet_id: String, target_star: int) -> bool:
 	var from_star := int(f.get("system_id", -1))
 	if from_star < 0 or from_star == target_star:
 		return false
-	var path := _galaxy_data.shortest_path(from_star, target_star)
+	var path := shortest_lane_path(from_star, target_star)
 	if path.size() < 2:
 		return false
 	f["route"] = _build_multi_hop_route(path)
@@ -539,6 +1073,7 @@ func order_fleet_path_to_star(fleet_id: String, target_star: int) -> bool:
 func _order_transit_path_to_star(f: Dictionary, target_star: int) -> bool:
 	## Mid-lane re-route. Cost continue = (1−p)+hops(B,D); reverse = p+hops(A,D).
 	## Prefer continue on ties / equal cost. Route starts after this transit.
+	## Hops use the geometric lane graph (wait-at-locked-gate semantics).
 	var a := int(f.get("from_star", -1))
 	var b := int(f.get("to_star", -1))
 	if a < 0 or b < 0 or a == b:
@@ -568,7 +1103,7 @@ func _order_transit_path_to_star(f: Dictionary, target_star: int) -> bool:
 			"to_z": final_pos.z,
 		})
 	else:
-		var path := _galaxy_data.shortest_path(arrival, target_star)
+		var path := shortest_lane_path(arrival, target_star)
 		if path.size() < 2:
 			return false
 		route = _build_multi_hop_route(path)
@@ -582,10 +1117,10 @@ func _order_transit_path_to_star(f: Dictionary, target_star: int) -> bool:
 
 
 func _lane_hop_count(from_star: int, to_star: int) -> int:
-	## BFS edge count; 0 if same star; −1 if unreachable.
+	## Geometric BFS edge count; 0 if same star; −1 if unreachable.
 	if from_star == to_star:
 		return 0
-	var path := _galaxy_data.shortest_path(from_star, to_star)
+	var path := shortest_lane_path(from_star, to_star)
 	if path.is_empty():
 		return -1
 	return path.size() - 1
@@ -702,6 +1237,8 @@ func begin_hyperlane_transit(fleet_id: String, from_star: int, to_star: int) -> 
 		return false
 	# Entry cooldown: block until ready; cruise tick keeps ordered at portal and retries.
 	if not can_begin_hyperlane_transit(fleet_id):
+		return false
+	if not can_travel_between(from_star, to_star, FACTION_KIND_NORMAL):
 		return false
 	var f: Dictionary = fleets[fleet_id]
 	_consume_route_on_transit_begin(f, from_star, to_star)
@@ -1353,6 +1890,9 @@ func _tick_fleet_arrivals() -> void:
 		f["orbiting"] = false  # free-disk placement at portal; no Kepler resume
 		f["from_star"] = -1
 		f["to_star"] = -1
+		# Friendly arrival explores the destination for the player faction.
+		if not bool(f.get("hostile", false)):
+			explore_star(dest, PLAYER_FACTION)
 		# Place immediately so off-screen multi-hop cruise can continue.
 		_resolve_fleet_placement(f)
 		# Keep GameState.selected_fleet_id — selection persists across transit.

@@ -1,9 +1,11 @@
 extends Node3D
 ## Builds the galaxy star MultiMesh + lane line mesh from exported JSON.
-## Fog of war: undiscovered stars are deep-maroon single spheres and not clickable.
-## In-transit fleets and parked friendly fleets use PlanetFlag zoom-inset markers.
+## Terra incognita / FOW: unexplored stars are deep-maroon single spheres and
+## not clickable while fog is on. Hyperlanes: solid unlocked+seen, mid-gap
+## locked+seen, grey dotted unseen (galaxy-wide). Scientists unlock lanes.
 
 const FOG_COLOR := Color(0.42, 0.04, 0.12, 1.0)
+const UNSEEN_LANE_COLOR := Color(0.55, 0.55, 0.58, 0.55)
 const FLEET_ACCENT := Color(0.55, 0.85, 0.95)
 const FLEET_COLOR_A := Color(0.72, 0.82, 0.92)
 const FLEET_COLOR_B := Color(0.12, 0.18, 0.28)
@@ -19,6 +21,11 @@ const STAR_LABEL_FONT_SIZE := 36
 const STAR_LABEL_CAP_TO_DIAMETER := 1.0
 ## Gap between star edge and left edge of name (fraction of displayed diameter).
 const STAR_LABEL_GAP_TO_DIAMETER := 0.08
+## Locked-seen lanes: omit this middle fraction of the segment.
+const LOCKED_LANE_GAP := 0.28
+## Unseen dotted lanes: dash length as fraction of lane length.
+const UNSEEN_DASH_FRAC := 0.04
+const UNSEEN_GAP_FRAC := 0.035
 ## Visual-only inset for in-transit fleet flags along a lane (fraction of length).
 ## Keeps markers off star centers: display t ∈ [margin, 1−margin]. Star sphere
 ## radius is STAR_SPHERE_RADIUS (glyph scale up to ~1.9); 0.12 clears typical lane medians.
@@ -27,6 +34,8 @@ const TRANSIT_LANE_MARGIN := 0.12
 const SYSTEM_FLEET_FLAG_CAP := 3
 ## Galaxy Tab: wait this long for a second press before single-Tab (hover enter).
 const TAB_DOUBLE_WINDOW_SEC := 0.4
+## Lane LMB: wait for second click before queue/assign (double = promote to front).
+const LANE_DOUBLE_WINDOW_SEC := 0.35
 
 @onready var _stars_mmi: MultiMeshInstance3D = $Stars
 @onready var _lanes_mi: MeshInstance3D = $Lanes
@@ -52,6 +61,8 @@ var _star_labels: Array = []
 var _transit_markers: Dictionary = {}
 ## fleet_id -> {flag: PlanetFlag, fleet_id: String, star_id: int}
 var _system_fleet_markers: Dictionary = {}
+## lane_id -> UnlockProgressMarker (active scientist unlocks).
+var _unlock_markers: Dictionary = {}
 ## star_id -> start_index into friendly list (cycle window when count > cap).
 var _system_fleet_scroll: Dictionary = {}
 ## star_id -> {root: Control, up: Button, down: Button}
@@ -70,6 +81,10 @@ var _tab_armed: bool = false
 var _tab_arm_hover_id: int = -1
 ## Bumped to invalidate a pending single-Tab timeout after double-Tab / leave.
 var _tab_gen: int = 0
+## Armed single lane-LMB: lane id; second click promotes to queue front.
+var _lane_click_armed: bool = false
+var _lane_click_id: int = -1
+var _lane_click_gen: int = 0
 
 
 func _ready() -> void:
@@ -78,7 +93,7 @@ func _ready() -> void:
 		if _hud:
 			_hud.text = "Missing galaxy export.\nRun: .venv/bin/python export_godot.py"
 		return
-	GameState.discovered = _data.revealed.duplicate()
+	GameState.init_hyperlanes_from_galaxy(_data)
 	_labels_root = Node3D.new()
 	_labels_root.name = "HomeworldLabels"
 	add_child(_labels_root)
@@ -95,16 +110,7 @@ func _ready() -> void:
 			_camera_rig.pitch_deg = 48.0
 			_camera_rig.yaw_deg = -55.0
 			_camera_rig.call_deferred("set_focus", center, region)
-	if _hud:
-		var named := 0
-		for s in _data.stars:
-			if bool(s.get("homeworld", false)) and _data.is_revealed(int(s.get("id", -1))):
-				named += 1
-		var known := _data.revealed_count()
-		_hud.text = (
-			"Stars %d · Known %d · Fog %d · Homeworlds %d · LMB open · RMB path (fleet) · transit select · ▶/Space · WASD/RMB/Wheel"
-			% [_data.stars.size(), known, _data.stars.size() - known, named]
-		)
+	_refresh_hud_text()
 	if _fleet_panel_close:
 		_fleet_panel_close.focus_mode = Control.FOCUS_NONE
 		_fleet_panel_close.pressed.connect(_close_fleet_panel)
@@ -117,10 +123,15 @@ func _ready() -> void:
 	GameState.day_changed.connect(_on_day_changed)
 	GameState.fleets_changed.connect(_on_fleets_changed)
 	GameState.fleet_selection_changed.connect(_on_fleet_selection_changed)
+	GameState.fog_changed.connect(_on_fog_changed)
+	GameState.exploration_changed.connect(_on_exploration_changed)
+	GameState.lane_unlocks_changed.connect(_on_lane_unlocks_changed)
+	GameState.scientists_changed.connect(_on_scientists_changed)
 	# Seed authored fleets so galaxy system flags appear before visiting Sol.
 	GameState.seed_content_fleets()
 	_refresh_transit_markers()
 	_refresh_system_fleet_markers()
+	_refresh_unlock_markers()
 
 
 func _process(_delta: float) -> void:
@@ -129,11 +140,13 @@ func _process(_delta: float) -> void:
 	_apply_star_zoom_scales()
 	_place_transit_flags_on_screen()
 	_place_system_fleet_flags_on_screen()
+	_place_unlock_markers_on_screen()
 	_update_hovered_star()
 
 
 func _on_day_changed(_day: float) -> void:
 	_update_transit_marker_poses()
+	_update_unlock_marker_progress()
 	if not _panel_fleet_id.is_empty():
 		_refresh_fleet_panel()
 
@@ -146,6 +159,51 @@ func _on_fleets_changed() -> void:
 			_close_fleet_panel()
 		else:
 			_refresh_fleet_panel()
+
+
+func _star_known(star_id: int) -> bool:
+	## Visible / pickable under current FOW (fog off → all; fog on → explored).
+	return GameState.is_discovered(star_id)
+
+
+func _refresh_hud_text() -> void:
+	if _hud == null:
+		return
+	var known := GameState.explored_count()
+	var fog_n := _data.stars.size() - known
+	var fog_note := "FOW on" if GameState.fog_enabled else "FOW off"
+	var sci := "Sci %d/%d" % [GameState.scientists_free(), GameState.SCIENTIST_SLOTS]
+	var unlocked := GameState.unlocked_lane_count()
+	_hud.text = (
+		"Stars %d · Explored %d · Fog %d · Lanes %d · %s · %s · LMB star/lane · RMB path · ▶/Space"
+		% [_data.stars.size(), known, fog_n, unlocked, sci, fog_note]
+	)
+
+
+func _on_fog_changed(_enabled: bool) -> void:
+	_rebuild_map_visibility()
+
+
+func _on_exploration_changed(faction: String) -> void:
+	if faction != GameState.PLAYER_FACTION:
+		return
+	_rebuild_map_visibility()
+
+
+func _on_lane_unlocks_changed() -> void:
+	_rebuild_map_visibility()
+
+
+func _on_scientists_changed() -> void:
+	_refresh_hud_text()
+	_refresh_unlock_markers()
+
+
+func _rebuild_map_visibility() -> void:
+	_build_lanes()
+	_build_stars()
+	_refresh_system_fleet_markers()
+	_refresh_hud_text()
 
 
 func _on_fleet_selection_changed(fleet_id: String) -> void:
@@ -330,7 +388,7 @@ func _refresh_system_fleet_markers() -> void:
 	var by_star: Dictionary = {}  # star_id -> Array of fleet dicts
 	for s in _data.stars:
 		var sid := int(s.get("id", -1))
-		if sid < 0 or not _data.is_revealed(sid):
+		if sid < 0 or not _star_known(sid):
 			continue
 		var friendlies: Array = GameState.friendly_fleets_in_system(sid)
 		if friendlies.is_empty():
@@ -477,7 +535,7 @@ func _place_system_fleet_flags_on_screen() -> void:
 		if not is_instance_valid(flag):
 			continue
 		var sid := int(entry.get("star_id", -1))
-		if sid < 0 or not _data.is_revealed(sid):
+		if sid < 0 or not _star_known(sid):
 			flag.visible = false
 			continue
 		var star_wp := _star_world_pos(sid)
@@ -714,16 +772,22 @@ func _refresh_fleet_panel() -> void:
 				if typeof(hop) == TYPE_DICTIONARY and String(hop.get("kind", "")) == "hyperlane":
 					lane_hops += 1
 			var hops_n := lane_hops if lane_hops > 0 else route_n2
+			var wait_note := ""
+			if GameState.fleet_waiting_lane_unlock(_panel_fleet_id):
+				wait_note = " · waiting for unlock"
+				eta_line = "waiting for unlock"
 			if final_id2 >= 0:
-				dest_line = "Route to %s · %d hop%s left" % [
-					_star_label(final_id2), hops_n, "" if hops_n == 1 else "s"
+				dest_line = "Route to %s · %d hop%s left%s" % [
+					_star_label(final_id2), hops_n, "" if hops_n == 1 else "s", wait_note
 				]
 			elif next_hop >= 0:
-				dest_line = "Route · next %s · %d hop%s left" % [
-					_star_label(next_hop), hops_n, "" if hops_n == 1 else "s"
+				dest_line = "Route · next %s · %d hop%s left%s" % [
+					_star_label(next_hop), hops_n, "" if hops_n == 1 else "s", wait_note
 				]
 			else:
-				dest_line = "Route · %d hop%s left" % [hops_n, "" if hops_n == 1 else "s"]
+				dest_line = "Route · %d hop%s left%s" % [
+					hops_n, "" if hops_n == 1 else "s", wait_note
+				]
 		elif bool(f.get("ordered", false)):
 			dest_line = "Disk dest (%.2f, %.2f) AU" % [
 				float(f.get("dest_x", 0.0)), float(f.get("dest_z", 0.0))
@@ -837,13 +901,15 @@ func _transit_flag_at_global(global_pos: Vector2) -> String:
 
 
 func _input(event: InputEvent) -> void:
-	## RMB: reverse selected transit flag; else path selected fleet (in-system or
-	## mid-transit) to a revealed star.
+	## RMB: pause unlock marker; reverse selected transit flag; else path fleet.
 	if not _pick_enabled or not visible:
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			if _try_pause_unlock_at_global(mb.global_position):
+				get_viewport().set_input_as_handled()
+				return
 			var hit := _transit_flag_at_global(mb.global_position)
 			var sel := GameState.selected_fleet_id
 			if not hit.is_empty() and not sel.is_empty() and hit == sel:
@@ -856,6 +922,7 @@ func _input(event: InputEvent) -> void:
 
 func _try_rmb_path_to_star(screen_pos: Vector2) -> bool:
 	## Friendly movable fleet in-system or mid-transit → multi-hop path to star.
+	## Allows fogged destinations (fly to locked gates / explore on arrival).
 	var sel := GameState.selected_fleet_id
 	if sel.is_empty() or not GameState.has_fleet(sel):
 		return false
@@ -867,7 +934,7 @@ func _try_rmb_path_to_star(screen_pos: Vector2) -> bool:
 	var status := String(f.get("status", ""))
 	if status != "in_system" and status != "in_transit":
 		return false
-	var star_id := _pick_star(screen_pos)
+	var star_id := _pick_star(screen_pos, true)
 	if star_id < 0:
 		return false
 	if not GameState.order_fleet_path_to_star(sel, star_id):
@@ -896,9 +963,13 @@ func _unhandled_input(event: InputEvent) -> void:
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			var id := _pick_star(mb.position)
 			if id >= 0:
+				_clear_lane_click_arm()
 				GameState.enter_system(id)
 				get_viewport().set_input_as_handled()
+			elif _handle_lane_lmb(mb.position):
+				get_viewport().set_input_as_handled()
 			elif not _panel_fleet_id.is_empty():
+				_clear_lane_click_arm()
 				# LMB empty space deselects transit fleet (same as system view).
 				_close_fleet_panel()
 				get_viewport().set_input_as_handled()
@@ -946,7 +1017,7 @@ func _on_tab_single_timeout(gen: int) -> void:
 		GameState.enter_system(hover)
 
 
-func _pick_star(screen_pos: Vector2) -> int:
+func _pick_star(screen_pos: Vector2, allow_fogged: bool = false) -> int:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null or _star_positions.is_empty():
 		return -1
@@ -959,7 +1030,7 @@ func _pick_star(screen_pos: Vector2) -> int:
 	var best_i := -1
 	var best_d := threshold
 	for i in _star_positions.size():
-		if not _data.is_revealed(i):
+		if not allow_fogged and not _star_known(i):
 			continue
 		var p := _star_positions[i]
 		var w := p - from
@@ -998,7 +1069,7 @@ func _build_stars() -> void:
 	var instance_count := 0
 	for i in n:
 		var s: Dictionary = _data.stars[i]
-		if _data.is_revealed(int(s.get("id", i))):
+		if _star_known(int(s.get("id", i))):
 			instance_count += clampi(int(s.get("multiplicity", 1)), 1, 3)
 		else:
 			instance_count += 1
@@ -1023,7 +1094,7 @@ func _build_stars() -> void:
 		var sid := int(s.get("id", i))
 		var pos := Vector3(float(s.x), float(s.z), float(s.y))
 		_star_positions[i] = pos
-		var fogged := not _data.is_revealed(sid)
+		var fogged := not _star_known(sid)
 
 		if fogged:
 			# Undiscovered: deep maroon single sphere (hide multiplicity).
@@ -1165,31 +1236,30 @@ func _build_lanes() -> void:
 	for s in _data.stars:
 		star_pos[int(s.id)] = Vector3(float(s.x), float(s.z), float(s.y))
 
-	for lane in _data.lanes:
+	for li in _data.lanes.size():
+		var lane: Dictionary = _data.lanes[li]
 		var a: int = int(lane.a)
 		var b: int = int(lane.b)
 		if not star_pos.has(a) or not star_pos.has(b):
 			continue
-		var a_known := _data.is_revealed(a)
-		var b_known := _data.is_revealed(b)
-		# Hide lanes that don't touch the revealed neighborhood.
-		if not a_known and not b_known:
+		var pa: Vector3 = star_pos[a]
+		var pb: Vector3 = star_pos[b]
+		var seen := GameState.is_lane_seen(li)
+		var unlocked := GameState.is_lane_unlocked(li)
+		if not seen:
+			_add_dotted_segment(st, pa, pb, UNSEEN_LANE_COLOR)
 			continue
 		var col := _color_from_entry(lane)
-		if not a_known or not b_known:
-			# Edge of fog: mute the spur into unknown space.
-			col = FOG_COLOR
-			col.a = 0.28
-		elif String(lane.get("paint", "")) == "black":
-			col.a = 0.22
-		elif not bool(lane.get("unlocked", false)):
-			col.a = 0.55
-		else:
+		if String(lane.get("paint", "")) == "black":
+			col.a = 0.35
+		elif unlocked:
 			col.a = 0.9
-		st.set_color(col)
-		st.add_vertex(star_pos[a])
-		st.set_color(col)
-		st.add_vertex(star_pos[b])
+		else:
+			col.a = 0.75
+		if unlocked:
+			_add_solid_segment(st, pa, pb, col)
+		else:
+			_add_gapped_segment(st, pa, pb, col)
 
 	var mesh := st.commit()
 	var mat := StandardMaterial3D.new()
@@ -1199,6 +1269,254 @@ func _build_lanes() -> void:
 	mat.albedo_color = Color(1, 1, 1, 1)
 	_lanes_mi.mesh = mesh
 	_lanes_mi.material_override = mat
+
+
+func _add_solid_segment(st: SurfaceTool, pa: Vector3, pb: Vector3, col: Color) -> void:
+	st.set_color(col)
+	st.add_vertex(pa)
+	st.set_color(col)
+	st.add_vertex(pb)
+
+
+func _add_gapped_segment(st: SurfaceTool, pa: Vector3, pb: Vector3, col: Color) -> void:
+	## Locked but seen: color matches unlocked paint; middle of the lane missing.
+	var gap := LOCKED_LANE_GAP
+	var t0 := 0.5 - gap * 0.5
+	var t1 := 0.5 + gap * 0.5
+	var mid0 := pa.lerp(pb, t0)
+	var mid1 := pa.lerp(pb, t1)
+	_add_solid_segment(st, pa, mid0, col)
+	_add_solid_segment(st, mid1, pb, col)
+
+
+func _add_dotted_segment(st: SurfaceTool, pa: Vector3, pb: Vector3, col: Color) -> void:
+	var length := pa.distance_to(pb)
+	if length < 1e-8:
+		return
+	var dash := UNSEEN_DASH_FRAC
+	var gap := UNSEEN_GAP_FRAC
+	var step := dash + gap
+	var t := 0.0
+	while t < 1.0 - 1e-6:
+		var t1 := minf(t + dash, 1.0)
+		_add_solid_segment(st, pa.lerp(pb, t), pa.lerp(pb, t1), col)
+		t += step
+
+
+func _handle_lane_lmb(screen_pos: Vector2) -> bool:
+	## Single LMB (after window): queue/assign. Double LMB same lane: promote to front.
+	var li := _pick_lane(screen_pos)
+	if li < 0:
+		_clear_lane_click_arm()
+		return false
+	if _lane_click_armed and _lane_click_id == li:
+		_clear_lane_click_arm()
+		if GameState.promote_scientist_queue(li):
+			_refresh_hud_text()
+			_refresh_unlock_markers()
+			return true
+		# Not queued yet / can't promote — fall back to normal request.
+		return _try_assign_scientist_lane(li)
+	_lane_click_armed = true
+	_lane_click_id = li
+	_lane_click_gen += 1
+	var gen := _lane_click_gen
+	get_tree().create_timer(LANE_DOUBLE_WINDOW_SEC).timeout.connect(
+		func() -> void: _on_lane_single_timeout(gen)
+	)
+	return true
+
+
+func _on_lane_single_timeout(gen: int) -> void:
+	if gen != _lane_click_gen or not _lane_click_armed:
+		return
+	var li := _lane_click_id
+	_clear_lane_click_arm()
+	if not _pick_enabled or not visible:
+		return
+	_try_assign_scientist_lane(li)
+
+
+func _clear_lane_click_arm() -> void:
+	_lane_click_armed = false
+	_lane_click_id = -1
+	_lane_click_gen += 1
+
+
+func _try_assign_scientist_lane(lane_id: int) -> bool:
+	if lane_id < 0:
+		return false
+	if not GameState.can_request_scientist(lane_id):
+		return false
+	if not GameState.request_scientist_unlock(lane_id):
+		return false
+	_refresh_hud_text()
+	_refresh_unlock_markers()
+	return true
+
+
+func _try_pause_unlock_at_global(global_pos: Vector2) -> bool:
+	for lid_v in _unlock_markers.keys():
+		var marker: UnlockProgressMarker = _unlock_markers[lid_v] as UnlockProgressMarker
+		if marker == null or not is_instance_valid(marker):
+			continue
+		if not marker.hit_test_global(global_pos):
+			continue
+		var lid := int(lid_v)
+		if GameState.cancel_or_pause_scientist(lid):
+			_refresh_unlock_markers()
+			_refresh_hud_text()
+			return true
+	return false
+
+
+func _refresh_unlock_markers() -> void:
+	if _transit_flags_root == null:
+		return
+	var live: Dictionary = {}
+	for p in GameState.scientist_projects:
+		var lid := int(p.get("lane_id", -1))
+		if lid < 0:
+			continue
+		live[lid] = true
+		_ensure_unlock_marker(lid)
+		var marker: UnlockProgressMarker = _unlock_markers[lid]
+		marker.world_pos = _lane_midpoint(lid)
+		marker.set_active_progress(GameState.scientist_progress(lid))
+		var left := 0.0
+		for p2 in GameState.scientist_projects:
+			if int(p2.get("lane_id", -1)) == lid:
+				left = maxf(float(p2.get("done_day", 0.0)) - GameState.day, 0.0)
+				break
+		marker.tooltip_text = "Unlocking · %.0f days left · RMB to pause" % ceilf(left)
+	for qi in GameState.scientist_queue.size():
+		var job: Dictionary = GameState.scientist_queue[qi]
+		var lidq := int(job.get("lane_id", -1))
+		if lidq < 0:
+			continue
+		live[lidq] = true
+		_ensure_unlock_marker(lidq)
+		var mq: UnlockProgressMarker = _unlock_markers[lidq]
+		mq.world_pos = _lane_midpoint(lidq)
+		var num := qi + 1
+		var unseen := not GameState.is_lane_seen(lidq)
+		mq.set_queue_number(num, unseen)
+		if unseen:
+			mq.tooltip_text = "Queued #%d (unseen) · waits until seen · RMB to cancel" % num
+		else:
+			mq.tooltip_text = "Queued #%d · RMB to cancel" % num
+	var to_drop: Array = []
+	for lid2 in _unlock_markers.keys():
+		if not live.has(lid2):
+			to_drop.append(lid2)
+	for lid3 in to_drop:
+		var old: UnlockProgressMarker = _unlock_markers[lid3] as UnlockProgressMarker
+		if is_instance_valid(old):
+			old.queue_free()
+		_unlock_markers.erase(lid3)
+
+
+func _ensure_unlock_marker(lane_id: int) -> void:
+	if _unlock_markers.has(lane_id):
+		return
+	var m := UnlockProgressMarker.new()
+	m.lane_id = lane_id
+	_transit_flags_root.add_child(m)
+	_unlock_markers[lane_id] = m
+
+
+func _update_unlock_marker_progress() -> void:
+	for lid_v in _unlock_markers.keys():
+		var marker: UnlockProgressMarker = _unlock_markers[lid_v] as UnlockProgressMarker
+		if marker == null or not is_instance_valid(marker):
+			continue
+		var lid := int(lid_v)
+		var qpos := GameState.scientist_queue_position(lid)
+		if qpos > 0:
+			var unseen := not GameState.is_lane_seen(lid)
+			marker.set_queue_number(qpos, unseen)
+			if unseen:
+				marker.tooltip_text = (
+					"Queued #%d (unseen) · waits until seen · RMB to cancel" % qpos
+				)
+			else:
+				marker.tooltip_text = "Queued #%d · RMB to cancel" % qpos
+			continue
+		if not GameState.is_scientist_working_lane(lid):
+			continue
+		marker.set_active_progress(GameState.scientist_progress(lid))
+		var left := 0.0
+		for p in GameState.scientist_projects:
+			if int(p.get("lane_id", -1)) == lid:
+				left = maxf(float(p.get("done_day", 0.0)) - GameState.day, 0.0)
+				break
+		marker.tooltip_text = "Unlocking · %.0f days left · RMB to pause" % ceilf(left)
+
+
+func _place_unlock_markers_on_screen() -> void:
+	if not visible or _transit_flags_root == null or not _transit_flags_root.visible:
+		for lid_v in _unlock_markers.keys():
+			var m0: UnlockProgressMarker = _unlock_markers[lid_v] as UnlockProgressMarker
+			if is_instance_valid(m0):
+				m0.visible = false
+		return
+	var cam := get_viewport().get_camera_3d()
+	if cam == null:
+		return
+	var vp := get_viewport().get_visible_rect().size
+	for lid_v in _unlock_markers.keys():
+		var marker: UnlockProgressMarker = _unlock_markers[lid_v] as UnlockProgressMarker
+		if marker == null or not is_instance_valid(marker):
+			continue
+		var wp: Vector3 = marker.world_pos
+		if cam.is_position_behind(wp):
+			marker.visible = false
+			continue
+		var tip := cam.unproject_position(wp)
+		if tip.x < -40.0 or tip.y < -40.0 or tip.x > vp.x + 40.0 or tip.y > vp.y + 40.0:
+			marker.visible = false
+			continue
+		marker.place_at_screen(tip)
+
+
+func _lane_midpoint(lane_id: int) -> Vector3:
+	if lane_id < 0 or lane_id >= _data.lanes.size():
+		return Vector3.ZERO
+	var lane: Dictionary = _data.lanes[lane_id]
+	var a := int(lane.get("a", -1))
+	var b := int(lane.get("b", -1))
+	return _star_world_pos(a).lerp(_star_world_pos(b), 0.5)
+
+
+func _pick_lane(screen_pos: Vector2) -> int:
+	## Nearest lane segment under the cursor (screen-space distance).
+	var cam := get_viewport().get_camera_3d()
+	if cam == null or _data.lanes.is_empty():
+		return -1
+	var best_i := -1
+	var best_d := 14.0  # px
+	for li in _data.lanes.size():
+		var lane: Dictionary = _data.lanes[li]
+		var a := int(lane.get("a", -1))
+		var b := int(lane.get("b", -1))
+		if a < 0 or b < 0 or a >= _star_positions.size() or b >= _star_positions.size():
+			continue
+		var sa := cam.unproject_position(_star_positions[a])
+		var sb := cam.unproject_position(_star_positions[b])
+		var d := _dist_point_to_segment_2d(screen_pos, sa, sb)
+		if d < best_d:
+			best_d = d
+			best_i = li
+	return best_i
+
+
+func _dist_point_to_segment_2d(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var len_sq := ab.length_squared()
+	if len_sq < 1e-8:
+		return p.distance_to(a)
+	var t := clampf((p - a).dot(ab) / len_sq, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
 
 
 func _color_from_entry(entry: Dictionary) -> Color:

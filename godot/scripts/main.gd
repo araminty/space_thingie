@@ -12,6 +12,8 @@ extends Node3D
 @onready var _play_btn: Button = $UI/TimeHud/PlayButton
 @onready var _speed_strip: HBoxContainer = $UI/TimeHud/SpeedStrip
 @onready var _day_lbl: Label = $UI/TimeHud/DayLabel
+@onready var _fog_btn: Button = $UI/TimeHud/FogButton
+@onready var _scientist_lbl: Label = $UI/TimeHud/ScientistLabel
 
 var _speed_btns: Array[Button] = []
 
@@ -26,13 +28,20 @@ func _ready() -> void:
 		# (not Button ui_accept). LineEdit/TextEdit still consume Space via GUI.
 		_play_btn.focus_mode = Control.FOCUS_NONE
 		_play_btn.pressed.connect(GameState.toggle_play)
+	if _fog_btn:
+		_fog_btn.focus_mode = Control.FOCUS_NONE
+		_fog_btn.pressed.connect(GameState.toggle_fog)
 	_wire_speed_buttons()
 	GameState.entered_system.connect(_on_entered_system)
 	GameState.returned_to_galaxy.connect(_on_returned)
 	GameState.day_changed.connect(_on_day_changed)
 	GameState.playing_changed.connect(_on_playing_changed)
 	GameState.play_speed_changed.connect(_on_play_speed_changed)
+	GameState.fog_changed.connect(_on_fog_changed)
+	GameState.scientists_changed.connect(_on_scientists_changed)
 	_sync_time_ui()
+	_sync_fog_ui()
+	_sync_scientist_ui()
 
 
 func _wire_speed_buttons() -> void:
@@ -122,6 +131,7 @@ func _show_galaxy() -> void:
 
 func _on_day_changed(_day: float) -> void:
 	_sync_time_ui()
+	_sync_scientist_ui()
 
 
 func _on_playing_changed(_playing: bool) -> void:
@@ -132,12 +142,54 @@ func _on_play_speed_changed(_speed: float) -> void:
 	_sync_speed_ui()
 
 
+func _on_fog_changed(_enabled: bool) -> void:
+	_sync_fog_ui()
+
+
+func _on_scientists_changed() -> void:
+	_sync_scientist_ui()
+
+
 func _sync_time_ui() -> void:
 	if _play_btn:
 		_play_btn.text = "⏸ Pause" if GameState.playing else "▶ Play"
 	if _day_lbl:
 		_day_lbl.text = GameState.day_label_text()
 	_sync_speed_ui()
+
+
+func _sync_fog_ui() -> void:
+	if _fog_btn == null:
+		return
+	_fog_btn.text = "FOW: On" if GameState.fog_enabled else "FOW: Off"
+	_fog_btn.modulate = (
+		Color(1.05, 0.9, 0.95, 1.0) if GameState.fog_enabled
+		else Color(0.85, 0.95, 0.9, 0.9)
+	)
+
+
+func _sync_scientist_ui() -> void:
+	if _scientist_lbl == null:
+		return
+	var free_n := GameState.scientists_free()
+	var busy := GameState.scientist_projects
+	var queued_n := GameState.scientist_queue.size()
+	var queue_note := ""
+	if queued_n > 0:
+		queue_note = " · queue %d" % queued_n
+	if busy.is_empty() and queued_n == 0:
+		_scientist_lbl.text = "Scientists %d/%d free · LMB lane · RMB ring/queue" % [
+			free_n, GameState.SCIENTIST_SLOTS
+		]
+		return
+	var bits: PackedStringArray = PackedStringArray()
+	for p in busy:
+		var left := maxf(float(p.get("done_day", 0.0)) - GameState.day, 0.0)
+		bits.append("lane#%d %.0fd" % [int(p.get("lane_id", -1)), left])
+	_scientist_lbl.text = "Scientists %d/%d free%s · %s" % [
+		free_n, GameState.SCIENTIST_SLOTS, queue_note,
+		", ".join(bits) if not bits.is_empty() else "idle"
+	]
 
 
 func _sync_speed_ui() -> void:

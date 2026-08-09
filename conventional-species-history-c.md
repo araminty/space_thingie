@@ -151,7 +151,8 @@ Each homeworld: exactly one moderate + one drastic.
 
 #### Abductee — Moderate — Tidecloth Compact (Thalass)
 
-**Taken:** ~1550. **World:** Warm archipelago; wet rot, naval leagues. **Variant:** Moderate.
+**Taken:** ~1550. **World:** Warm archipelago; wet rot, naval leagues. **Variant:** Moderate.  
+**Household:** **Polygamous** by custom — multi-spouse decks and stacked kin on wet hulls. Large families are the point of the marriage pattern (crewing, cloth-houses, island-league obligations), not an accident of fertility. Nomad “kids to feed” pitches that sound huge to drylanders still read as a crowded but ordinary Tidecloth household.
 
 **1400 — Needs & tools**
 
@@ -165,7 +166,7 @@ Each homeworld: exactly one moderate + one drastic.
 
 **2200:** Atoll habitats on a companion moon.  
 **2384:** **Lagoon lensing** (rings focusing starlight) — craft outlook: sailors treat it as a navigational reef-trick before theorists catch up.  
-**Arc:** Naval-communal; “drylanders” nickname for Earth.
+**Arc:** Naval-communal; polygamous kin-crews; “drylanders” nickname for Earth.
 
 #### Abductee — Drastic — Rootward Compact (Mycorr)
 
@@ -497,7 +498,7 @@ Each homeworld: exactly one moderate + one drastic.
 **1800:** Constraint = no mass labor theater; disruption = solo-boilers for silent industry.  
 **2200:** Hermit orbitals.  
 **2384:** Cipher fringes (Hecate-like) — officers notice orders arriving early.  
-**Arc:** Uncanny Ukari.
+**Arc:** Uncanny Ukari. *(Full occupation rewrite lives in `militant-producer-godking-draft.md` — Mahrían thrones, Ghinjir / Rokhir, tabula rasa peaceniks. On-time god-kin nomads: the **Khrysten** — name sits near “Kristen” (**KHRYSS-ten**); same species silhouette as the reserved oracles, commercial and sane.)*
 
 ---
 
@@ -575,15 +576,31 @@ Each homeworld: exactly one moderate + one drastic.
 **2384:** Ambient standing waves claimed as borders — then exits.  
 **Arc:** Nation = repertoire.
 
-#### Abductee — Drastic — Blank Song (Redactsound)
+#### Abductee — Drastic — Cah'Zee (Redactsound)
 
-**Taken:** ~1550. **World:** Recordings erase. **Variant:** Drastic.
+**Taken:** ~1550. **World:** Recordings erase — sound, image, and replay decay unless sealed by rite. **Variant:** Drastic.  
+**Traits (sheet):** Hide@, strong Liturgy, mild Peace.  
+**Outlook:** Liturgical-hide. Truth that is *discussed at length* curdles; media-talk is a kind of noise-violence. Tranquility is the civic good. Experiment is a short rite, then hush — never a review culture.
 
-**1400:** Witness-gins + redact-charges.  
-**1800:** Constraint = memory won’t stick; disruption = **witness-timers** that mature sealed attestations and bill intentional forgetting as civic stagecraft.  
-**2200:** Archive moons of blanks.  
-**2384:** Strikeout auroras — deletion as navigation.  
-**Arc:** Songs to be deleted.
+**Against parent Pellagra:** Parent arc is “media as life” (galleries, repertoire, rivalry). Cah'Zee treat that as the wound the world already warns against. In-depth critique, encore discourse, and “what did the piece mean” circles are shunned — at best rude, at worst liturgical offense. You may witness; you may seal; you may forget. You do not hold court about the feed.
+
+**Goku — deity of evil:** The named adversary of Cah'Zee liturgy. **Goku** is not a sky-father of storms but the spirit of **unquiet media** — endless replay, boast-speech, rivalry-as-worship, the hunger to *discuss* what should have been sealed. Galleries, encore cultures, and anyone who turns witnessing into a circus are said to walk Goku’s road. Rites of redaction and hush are framed as refusing Goku; a loud critic is “Goku-touched.” (Parent Pellagra find the theology baffling and slightly personal.)
+
+**1400 — Needs & tools**
+
+1. **Keeping necessary truth without a chatter-economy** — **witness-gins / seal-looms** that take a single clean impression and close. No circulating scores; no repertoire leagues.
+2. **Intrusive replay and noise-mission** (storms of half-erased echo, zealots trying to force permanent song) — **redact-charges / hush-bolts** that blank a space back to quiet, used as defense of tranquility more than as artistic sabotage.
+
+**1800 — Constraint & disruption**
+
+- **Constraint:** Nothing holds for a media industry or a critic class; memory slips, and custom forbids the long talk that would substitute for archives. Work and law stall when every attestation must be *re-argued* out loud.  
+- **Disruption:** **Witness-timers** — sealed attestations that mature in silence and open once, billed as **rite of forgetting** (liturgy), not stagecraft. Intentional blank is a sacrament of peace.
+
+**2200:** Archive moons of **blanks and sealed vaults** — pilgrimage hush-stations, not orbital amphitheaters. Settlements graded by how little unnecessary speech they need.
+
+**2384 — Door:** **Strikeout auroras** — sky-text that deletes itself along bearings. Noticed in communal quiet (failed “concerts” are a parent myth they reject); navigators follow the fading mark without symposium. Hide + liturgy lap-fall.
+
+**Arc:** From a world that erases recordings to a people who **refuse media discourse** and sacralize tranquility; deletion is prayer, not genre. Softnight finds them kindred in calm and alien in severity; Quiet Banner finds the listening familiar and the refusal to *talk about* signals almost holy; Pellagra parents hear heresy.
 
 ---
 
@@ -854,64 +871,70 @@ that means a big nuclear household; for **spore, mycelial, hive, and crust-colon
 peoples it means a **collective parental claim** (many adults jointly “own”
 hundreds or thousands of young). To humans: **“I’ve got 8 kids to feed!”**
 
+**Ideal** (table below) is worldbuilding only — what that culture treats as a
+normal / aspired brood or collective claim. Nomads do **not** pitch Ideal; they
+pitch **N**. Marriage and household form move Ideal a lot (pair-bond vs polygamy
+vs hive nursery vs crust parent-node); biology and settlement density do the rest.
+
 ### Kids-to-feed table (listener’s species)
 
 
-| Listener                      | N          | Why that reads “large but plausible”                                                                                                                                                                                                |
-| ----------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Humans (Sol)**              | **8**      | Big human family; not a dynasty.                                                                                                                                                                                                    |
-| Tidecloth Compact (Thalass)   | **11**     | Island-league households stack kin on wet decks.                                                                                                                                                                                    |
-| Rootward Compact (Mycorr)     | **647**    | Spore-canopy dens; many adults jointly claim a spore-cohort.                                                                                                                                                                        |
-| **Veyri of Keth-Orum**        | **9**      | Pack dens; many cubs under shared scent-law.                                                                                                                                                                                        |
-| Second Pack (Coldfold)        | **7**      | Same biology, harder ice-world attrition.                                                                                                                                                                                           |
-| Brand-Pack (Inkden)           | **8**      | Cautious dens; still Veyri-scale litters.                                                                                                                                                                                           |
-| **Sillin Chorus-Weavers**     | **94**     | Reef choruses count a fringe-spawn year as “our kids.”                                                                                                                                                                              |
-| Deepglow Court (Umbral)       | **43**     | Darkside courts keep large lume-ward classes.                                                                                                                                                                                       |
-| Flense-Shore (Whitecut)       | **27**     | Harsh shore; big clutch relative to survivors.                                                                                                                                                                                      |
-| **Drannock Clades**           | **12**     | Hex-farm ideal: many hands on cadastral soil.                                                                                                                                                                                       |
-| Stonehex (Karst)              | **11**     | Same hex logic, tighter karst plots.                                                                                                                                                                                                |
-| Spectacle Hex (Roargrid)      | **13**     | Show-hex households inflate for audience labor.                                                                                                                                                                                     |
-| **Moru Binders**              | **9**      | Barge-league families; room for apprentices-as-kin.                                                                                                                                                                                 |
-| Highspan Kin (Windlash)       | **8**      | High-span crews; leaner than river leagues.                                                                                                                                                                                         |
-| Glass-Barge (Facetflow)       | **10**     | Caravan cutters travel with broad kin-crews.                                                                                                                                                                                        |
-| **Hecate Line**               | **4**      | Sparse tower-holds; four dependents is a crowd.                                                                                                                                                                                     |
-| Mirror-Alone (Nullspire)      | **0.67**   | Failed sympathy-math: they aim at solitude culture and land on a fraction. Listeners are baffled; nomads double down.                                                                                                               |
-| Crowdwell Seed                | **10**     | Forced density → large corridor households.                                                                                                                                                                                         |
-| **Ylth Swarm-Kin**            | **2 183**  | Mycelial farm-metros; parent-nodes claim large spore-district broods (fungal farmers — not living rock).                                                                                                                            |
-| Sunspill Farms (Glarecap)     | **861**    | Farm-swarm under glare; collective tenders of a field-brood.                                                                                                                                                                        |
-| Rail-Spore (Schedulecap)      | **2 417**  | Timetable dens schedule multi-thousand cohorts.                                                                                                                                                                                     |
-| **Brazen Ukari**              | **127**    | Hive floors; a “large family” is a whole nursery tier.                                                                                                                                                                              |
-| Highsteppe Remnant (Windscar) | **10**     | Remnant pastoral bands; large but not hive-scale.                                                                                                                                                                                   |
-| Quiet Banner (Stillsteppe)    | **9**      | Quieter steppe households.                                                                                                                                                                                                          |
-| **Soft-Lattice Ix**           | **38 441** | Living-crust parent-nodes claim vast bud-fields on the rind. No doubt the hateful Lewis would say you can fit a lot of chia seeds onto one rock. We hear she only ever had two children — unsurprising no proper colony wanted her. |
-| Deeper-Still (Abyssroot)      | **12 907** | Same crust-kin accounting in the dark; slightly leaner vent-broods.                                                                                                                                                                 |
-| Market Lattice (Clickcrust)   | **9 318**  | Stall-clusters claim huge bud-inventories across bazaar floors.                                                                                                                                                                     |
-| **Pellagra Singers**          | **7**      | Gallery households; choir apprentices count.                                                                                                                                                                                        |
-| Echo-Nation (Resound)         | **8**      | Echo-wards slightly larger.                                                                                                                                                                                                         |
-| Blank Song (Redactsound)      | **6**      | Redacted kin-lists; fewer named young.                                                                                                                                                                                              |
-| **Khar Dentate**              | **7**      | Flensing-coast litters; large for carnivores.                                                                                                                                                                                       |
-| Night-Caravan (Gloamdrift)    | **7**      | Caravan creches match parent scale.                                                                                                                                                                                                 |
-| Moss-Dent (Softbite)          | **9**      | Softer world; dens keep more young.                                                                                                                                                                                                 |
-| **Nuun Mirror-Polities**      | **6**      | Even counts preferred; three mirror-pairs.                                                                                                                                                                                          |
-| Triple-Fault (Triune)         | **9**      | Multiples of three; three triple-sets.                                                                                                                                                                                              |
-| Herd-Mirror (Driftpair)       | **12**     | Pastoral drift-pairs raise wide calf-cohorts.                                                                                                                                                                                       |
-| **Threnn Bell-Divers**        | **6**      | Descent lineages; six named heirs is heavy.                                                                                                                                                                                         |
-| Shallow-Tone (Brightwell)     | **6**      | Same scale in bright wells.                                                                                                                                                                                                         |
-| Dry-Chime (Windshaft)         | **5**      | Dry shafts; leaner creches.                                                                                                                                                                                                         |
-| **Vael of the Second Skin**   | **9**      | Watershed leagues; cooperative big households.                                                                                                                                                                                      |
-| Nearskin Compact (Closeglen)  | **8**      | Compact towns; solid mid-large.                                                                                                                                                                                                     |
-| Hidebound (Noavatar)          | **7**      | Harder giftless centuries; slightly leaner.                                                                                                                                                                                         |
-| **Orth of the Brief Dark**    | **7**      | Clan holds; seven children is a full forge-table.                                                                                                                                                                                   |
-| Softnight Kin (Milknight)     | **8**      | Picnic polities; easy shade, fuller tables.                                                                                                                                                                                         |
-| Neverdark (Brightstep)        | **6**      | Twin-sun harshness; six is ambitious.                                                                                                                                                                                               |
+| Listener                      | Ideal      | N          | Why that N reads “large but plausible”                                                                                                                                                                                              |
+| ----------------------------- | ---------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Humans (Sol)**              | **~2.6**   | **8**      | Ideal sits in the familiar ~2.5–2.7 preference band; **8** is a big nuclear household, not a dynasty.                                                                                                                               |
+| Tidecloth Compact (Thalass)   | **6**      | **11**     | Polygamous multi-spouse decks already aim high; **11** is a crowded but ordinary wet-hull stack.                                                                                                                                    |
+| Rootward Compact (Mycorr)     | **280**    | **647**    | Spore-canopy dens jointly claim spore-cohorts; **647** is a fat year, not a joke.                                                                                                                                                   |
+| **Veyri of Keth-Orum**        | **4**      | **9**      | Pack dens under shared scent-law; **9** cubs is a swollen den, still believable.                                                                                                                                                    |
+| Second Pack (Coldfold)        | **3**      | **7**      | Same biology, harder ice attrition pulls Ideal down; **7** still reads as a tough den’s boast.                                                                                                                                      |
+| Brand-Pack (Inkden)           | **3**      | **8**      | Cautious dens keep Ideal lean; **8** pushes Veyri-scale without leaving the species.                                                                                                                                                |
+| **Sillin Chorus-Weavers**     | **40**     | **94**     | Reef choruses count fringe-spawn years; **94** is a loud year for “our kids.”                                                                                                                                                       |
+| Deepglow Court (Umbral)       | **18**     | **43**     | Darkside lume-ward classes; **43** is a swollen ward.                                                                                                                                                                               |
+| Flense-Shore (Whitecut)       | **12**     | **27**     | Harsh shore; Ideal already high vs survivors; **27** is the boast clutch.                                                                                                                                                           |
+| **Drannock Clades**           | **3**      | **6**      | Fortress-garden allotment after the god-age; a full fort-table (**6**) is large under never-again dens — not the old open-hex dozen.                                                                                                |
+| Stonehex (Karst)              | **5**      | **12**     | Untransformed hex Ideal — many hands on cadastral soil (what parent used to mean). **12** is the swollen farm-hex.                                                                                                                  |
+| Spectacle Hex (Roargrid)      | **6**      | **13**     | Show-hex Ideal already inflated for audience labor; **13** is tournament-household loud.                                                                                                                                            |
+| **Moru Binders**              | **4**      | **9**      | Barge-league families; **9** leaves room for apprentices-as-kin.                                                                                                                                                                    |
+| Highspan Kin (Windlash)       | **3**      | **8**      | High-span crews run leaner than river leagues; **8** is a full cable-crew boast.                                                                                                                                                    |
+| Glass-Barge (Facetflow)       | **4**      | **10**     | Caravan cutters travel with broad kin-crews; **10** is a fat cutter-house.                                                                                                                                                          |
+| **Hecate Line**               | **1**      | **4**      | Sparse tower-holds aspire to solitude-plus-heir; **4** dependents is already a crowd.                                                                                                                                               |
+| Mirror-Alone (Nullspire)      | **0**      | **0.67**   | Ideal is none (solitude culture). Nomads’ failed sympathy-math lands on a fraction; listeners baffled; freighters double down.                                                                                                      |
+| Crowdwell Seed                | **4**      | **10**     | Forced density raises Ideal above Hecate; **10** is a corridor-block household.                                                                                                                                                     |
+| **Ylth Swarm-Kin**            | **900**    | **2 183**  | Mycelial farm-metros; parent-nodes claim spore-district broods; **2 183** is a fat district year.                                                                                                                                   |
+| Sunspill Farms (Glarecap)     | **350**    | **861**    | Farm-swarm under glare; leaner Ideal than parent metro; **861** still collective-scale.                                                                                                                                             |
+| Rail-Spore (Schedulecap)      | **1 100**  | **2 417**  | Timetable dens schedule large cohorts; Ideal already timetable-fat; **2 417** is a peak slot.                                                                                                                                       |
+| **Brazen Ukari**              | **50**     | **127**    | Hive floors: Ideal is a nursery bay; **127** is a whole nursery tier.                                                                                                                                                               |
+| Highsteppe Remnant (Windscar) | **4**      | **10**     | Pastoral remnant Ideal, not hive-scale; **10** is a swollen band.                                                                                                                                                                   |
+| Quiet Banner (Stillsteppe)    | **3**      | **9**      | Quieter steppe households after the hush-age; **9** still reads as a full hush-house.                                                                                                                                               |
+| **Soft-Lattice Ix**           | **16 000** | **38 441** | Living-crust parent-nodes claim vast bud-fields; Ideal already colony-scale. (Lewis: two children — no proper colony wanted her.)                                                                                                    |
+| Deeper-Still (Abyssroot)      | **5 500**  | **12 907** | Same crust-kin accounting in the dark; leaner Ideal; **12 907** is a fat vent-brood.                                                                                                                                                |
+| Market Lattice (Clickcrust)   | **4 000**  | **9 318**  | Stall-clusters claim bud-inventories across bazaar floors; **9 318** is a boom inventory.                                                                                                                                           |
+| **Pellagra Singers**          | **3**      | **7**      | Gallery households; Ideal includes a couple of choir apprentices; **7** is a full gallery table.                                                                                                                                    |
+| Echo-Nation (Resound)         | **3**      | **8**      | Echo-wards slightly broader Ideal; **8** is a swollen ward.                                                                                                                                                                         |
+| Cah'Zee (Redactsound)         | **2**      | **6**      | Redacted kin-lists; Ideal stays small and quiet; **6** named young is already loud.                                                                                                                                                 |
+| **Khar Dentate**              | **3**      | **7**      | Flensing-coast litters; Ideal modest for carnivores; **7** is a fat den.                                                                                                                                                            |
+| Night-Caravan (Gloamdrift)    | **3**      | **7**      | Caravan creches match parent scale.                                                                                                                                                                                                 |
+| Moss-Dent (Softbite)          | **4**      | **9**      | Softer world; Ideal up a notch; **9** dens keep more young.                                                                                                                                                                         |
+| **Nuun Mirror-Polities**      | **2**      | **6**      | Even counts preferred (one mirror-pair Ideal); **6** = three mirror-pairs.                                                                                                                                                          |
+| Triple-Fault (Triune)         | **3**      | **9**      | Multiples of three; Ideal one triple-set; **9** = three.                                                                                                                                                                            |
+| Herd-Mirror (Driftpair)       | **5**      | **12**     | Pastoral drift-pairs raise wide calf-cohorts; **12** is a fat drift year.                                                                                                                                                           |
+| **Threnn Bell-Divers**        | **2**      | **6**      | Descent lineages; two named heirs is enough; **6** is heavy.                                                                                                                                                                        |
+| Shallow-Tone (Brightwell)     | **2**      | **6**      | Same scale in bright wells / deep dens.                                                                                                                                                                                             |
+| Dry-Chime (Windshaft)         | **2**      | **5**      | Dry shafts; lean Ideal and leaner boast.                                                                                                                                                                                            |
+| **Vael of the Second Skin**   | **4**      | **9**      | Watershed leagues; cooperative Ideal; **9** is a big watershed house.                                                                                                                                                               |
+| Nearskin Compact (Closeglen)  | **3**      | **8**      | Compact towns; solid mid Ideal; **8** mid-large.                                                                                                                                                                                    |
+| Hidebound (Noavatar)          | **3**      | **7**      | Harder giftless centuries; Ideal holds; **7** slightly leaner boast.                                                                                                                                                                |
+| **Orth of the Brief Dark**    | **3**      | **7**      | Clan holds; three is a proper forge-table; **7** is full.                                                                                                                                                                           |
+| Softnight Kin (Milknight)     | **4**      | **8**      | Picnic polities; easy shade lifts Ideal; **8** fuller tables.                                                                                                                                                                       |
+| Neverdark (Brightstep)        | **2**      | **6**      | Twin-sun harshness; Ideal lean; **6** is ambitious.                                                                                                                                                                                 |
 
 
+*(Drannock split: occupation aftermath shrinks parent Ideal and N; abductees keep the old cadastral / show-hex dozen. Pitching **12** at parent Drannock now sounds Stonehex.)*
 
+**Ideal note:** Figures are culture-mean aspirations (or collective-claim norms), not fertilities. Polygamy, hive nurseries, and crust parent-nodes pull Ideal far above pair-bond peoples; solitude ethics push it toward zero. Humans’ **~2.6** tracks the familiar survey band (~2.5–2.7); pair-bond Sol is the baseline the nomads overshoot to **8**.
 
 **Special miss — Mirror-Alone:** Nomads *try* to undercut toward Nullspire solitude and
 somehow invent **“I’ve got 0.67 kids to feed!”** They treat the decimal as
-precision. Nullspire find it invasive *and* innumerate; everyone else files it
-under freighter folklore.
+precision. Nullspire Ideal is **0**; the fraction is freighter folklore, invasive *and* innumerate.
 
 **Spurious precision:** On colony-scale listeners they never round — *“38 441 kids”*
 (to an Ix) is spoken like an invoice line, as if they audited someone else’s nursery.

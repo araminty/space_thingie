@@ -19,27 +19,67 @@ lens / optional pose dial / name) that track on screen; click badge or body → 
 and field markers stack in separate groups. Shared **▶ Play** / Space (visible on
 galaxy map and in systems) advances a galaxy-wide clock at **0.5 days/sec**
 baseline (prior rate ÷ 48; half-hour steps). HUD speed strip beside Play offers
-**¼× … 16×** multipliers (`0.25, 0.5, 1, 2, 4, 8, 16`); `GameState.play_speed`
+**¼× … 32×** multipliers (`0.25, 0.5, 1, 2, 4, 8, 32`); `GameState.play_speed`
 scales the day advance while playing (`[` / `]` cycle all seven speeds; digits
-**1…5** set `0.25×, 0.5×, 1×, 4×, 16×` — skipping 2× and 8× — and do **not**
+**1…5** set `0.25×, 0.5×, 1×, 4×, 32×` — skipping 2× and 8× — and do **not**
 toggle pause). Orbits **lerp** between
 whole-day samples.
 **Tab navigation:** In system view, Tab always returns to the galaxy (even if a
 panel is open). On the galaxy map, Tab uses a ~0.4s double-tap window: single
 Tab opens the known/clickable star under the mouse (same fog/enter rules as
 LMB); double Tab opens `GameState.last_system_id` (set on every successful
-`enter_system`). Fogged stars are not enterable.
+`enter_system`). Unexplored (fogged) stars are not enterable while FOW is on.
 Hyperlane portals stay fixed. Esc closes panel, then returns to galaxy.
-Hyperlane oval click jumps to the destination system (blocked if fogged).
-**Fog of war (Godot galaxy map):** Undiscovered stars render as a **deep maroon
-single sphere** (multiplicity glyphs hidden) and **cannot be clicked**. No
-discovery mechanics yet. Revealed set = **Sol’s home cluster** (all `tier==HOME`
-stars sharing Sol’s `unlock_group`) **plus** every star within **2 lane hops** of
-that cluster (BFS on the full lane graph, not unlocked-only). Lanes wholly in
-fog are hidden; spurs from known→fog are muted maroon. HUD shows known/fog
-counts. Opening camera is **angled (~48° pitch) and zoomed** on Sol’s home
-cluster. **Galaxy camera:** RMB drag pans, MMB drag turntable-orbits, wheel
-zooms (WASD pan unchanged). System orbit camera keeps RMB orbit / MMB pan.
+Hyperlane oval click jumps to the destination system (blocked if unexplored
+under FOW). LMB on a locked lane with an explored endpoint assigns a scientist
+when a slot is free.
+**Fog of war / terra incognita + hyperlane unlock (Godot galaxy map):** HUD
+**FOW: On/Off** toggles terra incognita. While **on**, unexplored stars render as
+a **deep maroon single sphere** (multiplicity glyphs hidden) and **cannot be
+clicked**. While **off**, the full star map paints and is enterable (exploration
+is still tracked). **Exploration** is per-faction (`GameState.explored_by`);
+player uses `PLAYER_FACTION` (`"player"`).
+
+**Two-step reveal:** (1) **Unlock hyperlanes** (shared among all normal empires).
+(2) **Explore systems** (per faction). Locked lanes block **normal** empires
+(home-cluster starters + scavengers). **Ancients** may travel any lane while
+locked (does not unlock). **Nomads** may travel **beltway** and **home** paint
+connections while locked (does not unlock). Map-gen `lane_unlocked` is **not**
+travel authority.
+
+**Scientists:** Player has **3** concurrent slots. Assign is instant (LMB a
+locked lane — including **unseen** grey-dotted lanes). If a scientist is free
+and the lane is **seen** (either endpoint explored), work starts immediately
+(progress ring). Otherwise the lane joins a **FIFO queue** shown as a **number
+in a circle** (1 = queue order; unseen numbers are dimmer). Unseen queue entries
+do **not** start until seen; the first **seen** queued unlock **jumps ahead** of
+them when a scientist frees. **RMB** the ring **pauses** active work (progress
+kept) and frees the scientist (queue promotes). **RMB** a queue number
+**cancels** that entry; later queue numbers bump up. **Double-LMB** a lane
+**promotes** it to the front of the queue (inserts at front if not yet queued);
+a free scientist may then start it if seen. Re-assigning a paused lane resumes
+from saved progress (or re-queues if busy). Home↔home lanes take **365** days;
+other lanes `365 × cost / 3` using exported trade edge costs (beltway/green
+cost 1 → faster). Completing unlock sets the lane unlocked for **all** normals
+and **explores the far endpoint** for the unlocking faction. Only that lane
+unlocks.
+
+**Start seed:** Sol explored; **5** home↔home lanes in Sol’s `unlock_group`
+unlocked (Sol-first BFS, then outward). Far ends explored. Standard start unlock
+count = 5.
+
+**Explore triggers:** faction unlocks a lane into the system, **or** a ship of
+that faction first enters via an already-unlocked lane (friendly fleet arrival /
+`enter_system`). Explored ⇒ system view enterable; unlock status of **all lanes
+from that system** is **seen**.
+
+**Lane visuals:** unlocked+seen = solid; locked+seen = same paint color with
+**middle gap**; unseen = **grey dotted** (galaxy-wide for now). HUD shows
+explored/fog/unlocked counts, scientist free/busy + ETAs, FOW on/off.
+
+Opening camera is **angled (~48° pitch) and zoomed** on Sol’s home cluster.
+**Galaxy camera:** RMB drag pans, MMB drag turntable-orbits, wheel zooms (WASD
+pan unchanged). System orbit camera keeps RMB orbit / MMB pan.
 Fleet/star RMB orders still win via `_input` before camera `_unhandled_input`.
 Shared **starfield** is a camera-locked **sphere** with an equirectangular
 star texture (uniform solid-angle sampling, nearest filtering, 1px stars).
@@ -135,20 +175,26 @@ or **mid-transit**, order a lane path to a destination star D:
 - **System view:** RMB on a hyperlane portal / linked-star oval (priority over
   pursue / disk dest) → path to that star; player camera does **not** jump (LMB
   portal still enters the linked system as before). In-system only (not transit).
-- **Galaxy map:** RMB on a revealed star → path order for the selected friendly
-  fleet whether it is in-system or mid-transit (RMB on own transit flag still
-  means turn around, not a path order).
-Algorithm (in-system): BFS on `GalaxyData` lanes → star id list `[s0…sn]`; build
-a `route` queue alternating `system_cruise` (disk dest = exit portal toward the
-next hop, or final inward arrival pose in `sn`) and `hyperlane` hops. Portal
-positions come from system contents hyperlanes, else ring radius × galactic
-outward direction. Execution: cruise to portal → existing 28-day transit begin
-(blocked until 28-day entry cooldown allows; consume matching cruise+hyperlane
-on successful begin) → on arrival spawn inward and apply next
-cruise dest. **Mid-transit re-route:** fleet on lane A→B at progress
-`p`∈[0,1] ordered to D. Cost continue = `(1−p) + path_hops(B,D)`; cost reverse
-= `p + path_hops(A,D)` (`path_hops` = BFS edge count via `GalaxyData.shortest_path`,
-0 if same star). Pick the strictly shorter; **ties prefer continue** (no reverse).
+- **Galaxy map:** RMB on a star (including fogged / unexplored) → path order for
+  the selected friendly fleet whether it is in-system or mid-transit (RMB on own
+  transit flag still means turn around, not a path order). Destination need not
+  be explored; locked hops stage at the portal until unlock.
+Algorithm (in-system): BFS on the **geometric** lane graph (all lanes, including
+locked) → star id list `[s0…sn]`; build a `route` queue alternating
+`system_cruise` (disk dest = exit portal toward the next hop, or final inward
+arrival pose in `sn`) and `hyperlane` hops. Locked hops are kept on the route:
+the fleet cruises to that portal and **waits** until the lane unlocks (and
+entry cooldown allows), then enters; scientists unlocking mid-wait unstick the
+fleet on the next motion tick. Portal positions come from system contents
+hyperlanes, else ring radius × galactic outward direction. Execution: cruise to
+portal → existing 28-day transit begin (blocked until 28-day entry cooldown
+allows **and** the lane is unlocked for normals; consume matching
+cruise+hyperlane on successful begin) → on arrival spawn inward and apply next
+cruise dest. **Mid-transit re-route:**
+fleet on lane A→B at progress `p`∈[0,1] ordered to D. Cost continue =
+`(1−p) + path_hops(B,D)`; cost reverse = `p + path_hops(A,D)` (`path_hops` =
+BFS edge count on the geometric lane graph, 0 if same star). Pick the strictly
+shorter; **ties prefer continue** (no reverse).
 If reverse wins, flip via existing transit reverse (`p' = 1−p`). Then set `route`
 from the chosen arrival end to D (do **not** duplicate the current hop); if D is
 that end, only the final inward cruise. Clears any prior route. **In-system
@@ -361,7 +407,9 @@ Travel is only allowed along unlocked lanes.
   most stars in the group stay locked). Home clusters sit inside their grouping
   on far edges when two homes adjoin, leaving a locked strip between them.
 - Internally fully connected (does not depend on the beltway).
-- At game start, **only intra-home-cluster lanes** are traversable.
+- At game start, **gameplay** unlocks **5** home↔home lanes from Sol (BFS);
+  further travel for normal empires requires scientist unlocks. Map-gen
+  `lane_unlocked` is not travel authority.
 
 ### 2) Ring network / beltway — blue (same-Ancient chains green)
 
