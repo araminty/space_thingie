@@ -153,10 +153,29 @@ func _fleet_side_hp(fleet_id: String, battle: Dictionary, friendly: bool) -> flo
 		var ud: Dictionary = u
 		if String(ud.get("fleet_id", "")) != fleet_id:
 			continue
-		if bool(ud.get("gone", false)):
+		if bool(ud.get("gone", false)) or bool(ud.get("struck", false)):
 			continue
 		total += maxf(float(ud.get("hp", 0.0)), 0.0)
 	return total
+
+
+func _fleet_side_morale(fleet_id: String, battle: Dictionary, friendly: bool) -> float:
+	var side: Dictionary = battle.get("side_a" if friendly else "side_b", {})
+	var s := 0.0
+	var n := 0
+	for u in side.get("units", []):
+		var ud: Dictionary = u
+		if String(ud.get("fleet_id", "")) != fleet_id:
+			continue
+		if bool(ud.get("gone", false)) or bool(ud.get("struck", false)):
+			continue
+		if int(ud.get("count", 0)) <= 0 or float(ud.get("hp", 0.0)) <= 0.0:
+			continue
+		s += float(ud.get("morale", 90.0))
+		n += 1
+	if n <= 0:
+		return float(side.get("morale", 90.0))
+	return s / float(n)
 
 
 func _make_fleet_card(fleet_id: String, battle: Dictionary, friendly: bool) -> Control:
@@ -169,7 +188,10 @@ func _make_fleet_card(fleet_id: String, battle: Dictionary, friendly: bool) -> C
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var name_lbl := Label.new()
-	name_lbl.text = String(f.get("name", "Fleet"))
+	var side_hp := _fleet_side_hp(fleet_id, battle, friendly)
+	var side_m := _fleet_side_morale(fleet_id, battle, friendly)
+	name_lbl.text = "%s  M%.0f" % [String(f.get("name", "Fleet")), side_m]
+	name_lbl.tooltip_text = "HP pool %.0f · avg morale %.0f" % [side_hp, side_m]
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	name_lbl.add_theme_font_size_override("font_size", 12)
 	name_lbl.add_theme_color_override(

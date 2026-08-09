@@ -440,19 +440,21 @@ Each opposed check picks attacker and defender **primaries**, then:
 
 
 
-### Band table (2d6)
+### Band table (4d6)
+
+Non-Bounce needs are probability-matched to the old 2d6 bands. **Bounce** is intentionally near-impossible (all sixes).
 
 
-| Delta    | Band       | Rule                                                               |
-| -------- | ---------- | ------------------------------------------------------------------ |
-| <= -4    | **Bounce** | Hit only on **12**                                                 |
-| -3 to -2 | **Hard**   | Hit on **10+**; high Redundancy may shrug one                      |
-| -1 to +1 | **Skew**   | Favored (higher primary) **7+**, other **9+**; Delta=0 both **8+** |
-| +2 to +3 | **Lean**   | Hit on **6+**                                                      |
-| >= +4    | **Butter** | Hit on **3+** (miss on 2 only)                                     |
+| Delta    | Band       | Rule (4d6)                                                            |
+| -------- | ---------- | --------------------------------------------------------------------- |
+| <= -4    | **Bounce** | Hit only on **24** (all sixes; ~0.08%)                                |
+| -3 to -2 | **Hard**   | Hit on **18+**; high Redundancy may shrug one                         |
+| -1 to +1 | **Skew**   | Favored (higher primary) **14+**, other **17+**; Delta=0 both **15+** |
+| +2 to +3 | **Lean**   | Hit on **12+**                                                        |
+| >= +4    | **Butter** | Hit on **8+**                                                         |
 
 
-**Flights vs long guns:** \light\ / small picket vs Hvy/Med artillery -> defend with **Reaction**, not Protection; attacker -2 or force Bounce unless G18b.
+**Flights vs long guns:** flight / small picket vs Hvy/Med artillery → defend with **Reaction**, not Protection; attacker **−2 Acc** (usually Bounce) unless G18b.
 
 ### Bird save (after a hit)
 
@@ -914,14 +916,25 @@ Player (or AI) sets these before the fight; the engine fills dynamics/gambits un
 
 
 
+## Prototype defaults (locked in `battle_sim.py`)
+
+| Topic | Default |
+|-------|---------|
+| Morale grain | Each `Unit` stack is one morale actor (e.g. Grain-gun×12 shares a band) |
+| Fungible pool | **1** slot per distinct mount *line* on the sheet + **1** thrust if Mob > 0 |
+| Fillers | Unused → Hang back; M0/struck → Dead in the water |
+| Thrust step | `±max(1, mob // 3)`; Escape/Pursue +1; birds half step; Hang back = 0 |
+| Axis | Side A home negative, Side B positive; deploy depths ~3–6 by profile |
+| `\|Δx\|` → band | 0–1 Point, 2–3 Close, 4–5 Medium, 6–8 Long, 9+ Extreme |
+| Cover / targeting | Prefer contact-ward (front) targets; fall-back rear lower priority unless birded |
+| Doctrine → assign | Side picks dynamic + gambits; package expands to per-unit fills |
+| Report cap | ≤8 fire assignment lines per side per round; rest as `+N hang back` |
+| Trumps | No extra commitment cost this pass — eligibility + assigned enabler slots only |
+
 ## Open questions
 
-- How fast does intended station move `x` vs Hang back / Escape thrust caps?  
 - Cover: strict `x` order only, or soft “within Δ of the pack” for fog/line shelter?  
-- How is the fungible pool counted — one unit per mount group? mobility + batteries + hangar? damage reduces capacity?  
-- Side-level plays vs ship-level assignment: does doctrine pick packages that expand into per-ship assigns?  
-- How do **TRUMP** gambits interact with the pool—do they demand several fungible units, or special eligibility only?  (Generally you would want to commit resources to trump elements but they dont require more commitments except when those commitments are necessary enablers)
-- Cap **reported** gambits for readability even when many ships each assign a full pool?  
+- How do **TRUMP** gambits interact with the pool beyond eligibility?  
 - How much of the mismatch table is hard rule vs weighted roll?  
 - Feints (G5): credibility track for “called”?  
 - Should **Deny escape** vs **Escape** allow wipe more easily than **Slug** vs **Escape**?  
@@ -931,6 +944,7 @@ Player (or AI) sets these before the fight; the engine fills dynamics/gambits un
 - Fall-back targeting: cover vs blind Spray / Dissipate?  
 - **Conflicting gambits:** defer until concrete pairs collide (cancel / partial / priority).  
 - Finish migrating catalog rows from “Gambit” label → Tactic vs Gambit + fail mode + which fungible units they assign.
+- Split stacks into individual hulls for true per-ship morale.
 
 ---
 

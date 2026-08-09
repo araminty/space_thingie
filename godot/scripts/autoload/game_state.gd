@@ -34,6 +34,12 @@ const DEFAULT_SYSTEM_EDGE_AU := 8.0
 const HALF_HOUR_DAYS := 1.0 / HALF_HOURS_PER_DAY
 ## Start a new fight vs a lone hostile.
 const BATTLE_CONTACT_AU := 0.25
+## After disengage/escape, push fleets at least this far apart ( > contact & join).
+const DISENGAGE_SEPARATION_AU := 0.55
+## Cooldown before the same fleets can re-contact after a disengage.
+const DISENGAGE_COOLDOWN_DAYS := 0.75
+## Match battle_sim.py: mutual break after this many rounds.
+const BATTLE_MAX_ROUNDS := 50
 ## Join an ongoing multi-fleet engagement (nearest engaged participant).
 const BATTLE_JOIN_AU := 0.30
 
@@ -1561,6 +1567,8 @@ func try_join_proximity_battles(system_id: int) -> void:
 		var cid := String(cd.get("id", ""))
 		if cid.is_empty() or is_fleet_engaged(cid):
 			continue
+		if _fleet_in_disengage_cooldown(cid):
+			continue
 		var cpos := Vector3(float(cd.get("pos_x", 0.0)), 0.0, float(cd.get("pos_z", 0.0)))
 		var best_bid := ""
 		var best_d := 1e9
@@ -1583,6 +1591,12 @@ func try_join_proximity_battles(system_id: int) -> void:
 		fleets_changed.emit()
 
 
+func _fleet_in_disengage_cooldown(fleet_id: String) -> bool:
+	if not fleets.has(fleet_id):
+		return true
+	return day + 1e-9 < float(fleets[fleet_id].get("disengage_until_day", 0.0))
+
+
 func try_start_proximity_battles(system_id: int) -> void:
 	## Call from system view each sim tick while fleets share a system.
 	## Prefer join-ongoing (caller) before starting new 1v1 contacts.
@@ -1600,14 +1614,20 @@ func try_start_proximity_battles(system_id: int) -> void:
 		var fa: Dictionary = fr
 		if bool(fa.get("engaged", false)):
 			continue
+		var fid := String(fa.get("id", ""))
+		if _fleet_in_disengage_cooldown(fid):
+			continue
 		var fpos := Vector3(float(fa.get("pos_x", 0.0)), 0.0, float(fa.get("pos_z", 0.0)))
 		for ho in hostiles:
 			var hb: Dictionary = ho
 			if bool(hb.get("engaged", false)):
 				continue
+			var hid := String(hb.get("id", ""))
+			if _fleet_in_disengage_cooldown(hid):
+				continue
 			var hpos := Vector3(float(hb.get("pos_x", 0.0)), 0.0, float(hb.get("pos_z", 0.0)))
 			if fpos.distance_to(hpos) <= BATTLE_CONTACT_AU:
-				_start_battle(String(fa.get("id", "")), String(hb.get("id", "")), system_id)
+				_start_battle(fid, hid, system_id)
 				# Hostile can only start one new fight at a time.
 				break
 
@@ -1711,12 +1731,16 @@ func _start_battle(friendly_id: String, hostile_id: String, system_id: int) -> v
 		String(ff.get("faction", "")),
 		ff.get("ship_templates", []),
 		friendly_id,
+		String(ff.get("role", "escort")),
+		-1,
 	)
 	var side_b := BattleRound.side_from_ships(
 		String(hf.get("name", "Hostile")),
 		String(hf.get("faction", "Choir")),
 		hf.get("ship_templates", []),
 		hostile_id,
+		String(hf.get("role", "raid")),
+		1,
 	)
 	battles[bid] = {
 		"id": bid,
@@ -1759,6 +1783,11 @@ func _tick_battles() -> void:
 		b["last_summary"] = summary
 		_sync_battle_ships(b)
 		var outcome := String(summary.get("outcome", "ongoing"))
+		if outcome == "ongoing" and int(b.get("round", 0)) >= BATTLE_MAX_ROUNDS:
+			summary["outcome"] = "mutual_break"
+			summary["disengage"] = true
+			b["last_summary"] = summary
+			outcome = "mutual_break"
 		if outcome != "ongoing":
 			finished.append(bid)
 	for bid2 in finished:
@@ -1803,8 +1832,19 @@ func _finish_battle(battle_id: String) -> void:
 	var b: Dictionary = battles[battle_id]
 	var summary: Dictionary = b.get("last_summary", {})
 	var outcome := String(summary.get("outcome", "ongoing"))
-	var wipe_friendly := outcome in ["b_wins", "mutual_wipe"]
-	var wipe_hostile := outcome in ["a_wins", "mutual_wipe"]
+	var disengage := (
+		bool(summary.get("disengage", false))
+		or outcome in ["a_escapes", "b_escapes", "mutual_break"]
+	)
+	var wipe_friendly := (not disengage) and outcome in ["b_wins", "mutual_wipe"]
+	var wipe_hostile := (not disengage) and outcome in ["a_wins", "mutual_wipe"]
+	# Escaper's foe does not get wiped; both sides survive a disengage.
+	if outcome == "a_escapes":
+		wipe_friendly = false
+		wipe_hostile = false
+	elif outcome == "b_escapes":
+		wipe_friendly = false
+		wipe_hostile = false
 	var friendly_ids := _battle_side_ids(b, true)
 	var hostile_ids := _battle_side_ids(b, false)
 	for fid in friendly_ids:
@@ -1833,10 +1873,84 @@ func _finish_battle(battle_id: String) -> void:
 		if wipe_hostile or n_b.is_empty():
 			_clear_pursuers_of(hid2)
 			fleets.erase(hid2)
+	if disengage:
+		_separate_fleets_after_disengage(friendly_ids, hostile_ids)
 	if not selected_fleet_id.is_empty() and not fleets.has(selected_fleet_id):
 		clear_fleet_selection()
 	fleets_changed.emit()
 	battles_changed.emit()
+
+
+func _fleet_xz(fleet_id: String) -> Vector3:
+	if not fleets.has(fleet_id):
+		return Vector3.ZERO
+	var f: Dictionary = fleets[fleet_id]
+	return Vector3(float(f.get("pos_x", 0.0)), 0.0, float(f.get("pos_z", 0.0)))
+
+
+func _side_centroid(ids: Array) -> Vector3:
+	var acc := Vector3.ZERO
+	var n := 0
+	for fid in ids:
+		if not fleets.has(String(fid)):
+			continue
+		acc += _fleet_xz(String(fid))
+		n += 1
+	if n <= 0:
+		return Vector3.ZERO
+	return acc / float(n)
+
+
+func _separate_fleets_after_disengage(friendly_ids: Array, hostile_ids: Array) -> void:
+	## Push surviving sides apart so proximity contact cannot instantly re-fire.
+	var survivors_a: Array = []
+	var survivors_b: Array = []
+	for fid in friendly_ids:
+		if fleets.has(String(fid)):
+			survivors_a.append(String(fid))
+	for hid in hostile_ids:
+		if fleets.has(String(hid)):
+			survivors_b.append(String(hid))
+	if survivors_a.is_empty() or survivors_b.is_empty():
+		return
+	var ca := _side_centroid(survivors_a)
+	var cb := _side_centroid(survivors_b)
+	var delta := ca - cb
+	if delta.length() < 1e-6:
+		delta = Vector3(1.0, 0.0, 0.0)
+	var dir := delta.normalized()
+	# Current nearest pair distance
+	var nearest := 1e9
+	for fid in survivors_a:
+		var pa := _fleet_xz(fid)
+		for hid in survivors_b:
+			nearest = minf(nearest, pa.distance_to(_fleet_xz(hid)))
+	var need := DISENGAGE_SEPARATION_AU - nearest
+	if need < 0.05:
+		need = 0.05  # still nudge slightly + cooldown
+	var push := need * 0.5 + 0.05
+	var until := day + DISENGAGE_COOLDOWN_DAYS
+	for fid in survivors_a:
+		_nudge_fleet_pos(fid, dir * push, until)
+	for hid in survivors_b:
+		_nudge_fleet_pos(hid, -dir * push, until)
+
+
+func _nudge_fleet_pos(fleet_id: String, offset: Vector3, disengage_until: float) -> void:
+	if not fleets.has(fleet_id):
+		return
+	var f: Dictionary = fleets[fleet_id]
+	var x := float(f.get("pos_x", 0.0)) + offset.x
+	var z := float(f.get("pos_z", 0.0)) + offset.z
+	f["pos_x"] = x
+	f["pos_z"] = z
+	f["orbiting"] = false
+	f["ordered"] = false
+	f["pursue_fleet_id"] = ""
+	f["disengage_until_day"] = disengage_until
+	# Clear destination so they don't immediately steam back into contact.
+	f.erase("dest_x")
+	f.erase("dest_z")
 
 
 func _fleet_names_joined(ids: Array, fallback: String) -> String:
@@ -1866,8 +1980,10 @@ func battle_hud_line(system_id: int = -1) -> String:
 			lines.append("Battle: %s vs %s (contact — round pending)" % [fa, hb])
 		else:
 			lines.append(
-				"Battle R%d: %s (%d) vs %s (%d)" % [
-					rnd, fa, int(sum.get("a_ships", 0)), hb, int(sum.get("b_ships", 0))
+				"Battle R%d: %s (%d · M%.0f) vs %s (%d · M%.0f)" % [
+					rnd,
+					fa, int(sum.get("a_ships", 0)), float(sum.get("a_morale", 0.0)),
+					hb, int(sum.get("b_ships", 0)), float(sum.get("b_morale", 0.0)),
 				]
 			)
 	return "\n".join(lines)

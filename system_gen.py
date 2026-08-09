@@ -33,7 +33,7 @@ from system_view import (
     draw_star_system,
 )
 
-CONTENTS_VERSION = 13
+CONTENTS_VERSION = 14  # ship mounts + combat stats on fleet hulls
 ## World-scale multipliers for ClassSheet size bands (on top of base ship scale).
 SIZE_SCALE: dict[str, float] = {
     "H+": 2.4,
@@ -322,6 +322,13 @@ def _ships_from_force(side: Side) -> list[dict[str, Any]]:
                     "size_scale": float(SIZE_SCALE.get(size, 1.0)),
                     "template": "basic_spaceship",
                     "offset": [0.0, 0.0, 0.0],
+                    "mounts": [[str(wid), int(n)] for wid, n in sheet.mounts],
+                    "prot": int(sheet.prot),
+                    "mob": int(sheet.mob),
+                    "reac": int(sheet.reac),
+                    "skirm": int(sheet.skirm),
+                    "redun": str(sheet.redun),
+                    "fog": str(sheet.fog),
                 }
             )
     _layout_fleet_offsets(ships)
