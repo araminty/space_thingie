@@ -1,8 +1,8 @@
 # Early-era arsenal (v3)
 
-Companion to [`early-era-stat-blocks.md`](early-era-stat-blocks.md) and [`battle-dynamics-gambits.md`](battle-dynamics-gambits.md).
+Companion to [`early-era-stat-blocks.md`](early-era-stat-blocks.md) and [`dynamics.md`](dynamics.md) (combat rolls still in [`legacy/battle-dynamics-gambits.md`](legacy/battle-dynamics-gambits.md)).
 
-**Archives:** [`arsenal-v1.md`](arsenal-v1.md) (named mounts) · [`arsenal-v2.md`](arsenal-v2.md) (plasma / cluster / cannon). Hit-table archives beside those.
+**Archives:** [`legacy/arsenal-v1.md`](legacy/arsenal-v1.md) (named mounts) · [`legacy/arsenal-v2.md`](legacy/arsenal-v2.md) (plasma / cluster / cannon). Hit-table archives beside those.
 
 This draft: **plasma** and **cannons** only. IDs are `P{size}{tier}` / `C{size}{tier}` (e.g. **P3B**). Roles match v2 intent (plasma = long spine; cannons = short teeth / fog hose). **No cluster.** Compact, March, and **Choir** share the full kit.
 
@@ -226,6 +226,6 @@ ROF column **3/5/10** = warship+ / picket / fighter (rounds between shots).
 
 ## Prototype wiring
 
-`battle_sim.py` loads mounts from the early-era sheets (`P4A×2`, …), resolves Track → Acc → Pen → Dmg die, tracks Cannon Sz2 ROF, and reports damage by **plasma** vs **cannon** × target class. Regen: `.venv/bin/python battle_sim.py all --report battle-reports.md --seeds 2,3,5,7,11`.
+`battle_sim.py` loads mounts from the early-era sheets (`P4A×2`, …), resolves Track → Acc → Pen → Dmg die, tracks Cannon Sz2 ROF, and reports damage by **plasma** vs **cannon** × target class. Regen: `.venv/bin/python battle_sim.py all --report legacy/battle-reports.md --seeds 2,3,5,7,11`.
 
-**Hit odds (v3):** [`arsenal-hit-tables.md`](arsenal-hit-tables.md). Archives: [`arsenal-hit-tables-v1.md`](arsenal-hit-tables-v1.md), [`arsenal-hit-tables-v2.md`](arsenal-hit-tables-v2.md).
+**Hit odds (v3):** [`arsenal-hit-tables.md`](arsenal-hit-tables.md). Archives: [`legacy/arsenal-hit-tables-v1.md`](legacy/arsenal-hit-tables-v1.md), [`legacy/arsenal-hit-tables-v2.md`](legacy/arsenal-hit-tables-v2.md).

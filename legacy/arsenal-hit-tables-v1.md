@@ -2,7 +2,7 @@
 
 # Arsenal hit probabilities (prototype)
 
-Companion to [`arsenal.md`](arsenal.md). **Hit** here means Acc (or Spray) lane success on the **4d6 band table** from [`battle-dynamics-gambits.md`](battle-dynamics-gambits.md) — not Penetration vs armor. See **Penetrating hit** section below for Acc × Pen.
+Companion to [`../arsenal.md`](../arsenal.md). **Hit** here means Acc (or Spray) lane success on the **4d6 band table** from [`battle-dynamics-gambits.md`](battle-dynamics-gambits.md) — not Penetration vs armor. See **Penetrating hit** section below for Acc × Pen.
 
 One table per weapon, **heaviest → lightest**. Rows are sample targets (also heavy → light).
 

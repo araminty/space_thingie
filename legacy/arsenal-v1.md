@@ -245,4 +245,4 @@ When a class listed Hvy 9 / Med 7, prefer mounting one **H** weapon at Pen≈9 a
 
 `battle_sim.py` still resolves with aggregated Hvy/Med/Screens. Next sim step: load mounts from this file (or a mirrored dict), pick weapon by lane, apply fog/distance mods, then Pen vs Prot / Acc vs Reac / Dmg die on penetrate.
 
-**Hit odds by range** (Acc/Spray lanes + Acc×Pen penetrating product; **4d6** band): see [`arsenal-hit-tables.md`](arsenal-hit-tables.md).
+**Hit odds by range** (Acc/Spray lanes + Acc×Pen penetrating product; **4d6** band): see [`../arsenal-hit-tables.md`](../arsenal-hit-tables.md).

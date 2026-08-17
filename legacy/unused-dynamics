@@ -1,0 +1,30 @@
+UNUSED — do not use this file.
+
+This was a scratch “dynamics” layer: if-then spines for how a fight should play
+out. It does not fit the model.
+
+Battles are tracked in core states (SE · AP · B/SB·CB · RC · ST). What a fleet
+wants is mission × picture × desire. What moves the graph is a transition
+tactic. Outcome is the collision of two desires plus track/geometry — not a
+predicted path.
+
+This file conflates those: it writes one side’s hoped sequence as if it were
+the state machine, ignores the foe’s seat, and treats Cover vs Exit / Approach
+commits as extra dynamics instead of tactics. Kept only as a discarded sketch.
+
+---
+
+battle dynamics
+
+The battles are primarily tracked in *states* (Search-Approach-Battle-Contact-Strike) not dynamics.  Dynamics is instead the meta layer of how things should be expected to play out given the stances that ships and fleets will behave.  Here is a non exhaustive brainstorming list of expectations for what fleets will want (not necessarily what will happen), expressed in psuedocode:
+
+if (Near_parity or advantage) and not obvious_alternative: search->approach->battle_slugging->battle_slugging (i.e. remain there until change)
+if strike_advantage and escape_feasible and not pinned: no_obvious_advantage = false
+if strike_advantage and escape_feasible and not pinned: battle->contact->search/strike->strike
+if (defending_convoy or defending_station) and not cutting_losses:  pinned = true
+if (defending_convoy and (cutting_losses or no_wounded_transports)) and not overwhelming_advantage: battle-> contact -> search -> end_battle
+if defending_station and station_can_tank and strike_advantage: battle->contact->strike
+if defending_station and strike_disadvantage and not (station_can_tank and waiting_out_strike): strike/battle -> contact -> battle
+if poor_coordination and (near_parity or advantage): obvious_alternative = True; search->approach->battle_chaos 
+if loss_insensitive_swarm -> search->approach->battle_chaos
+if (near_parity or disadvantage) and taking_more_damage and ((not pinned) or cutting_losses): battle->contact->search->end_battle

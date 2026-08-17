@@ -2,7 +2,7 @@
 
 # Arsenal hit probabilities (v2)
 
-Companion to [`arsenal.md`](arsenal.md). Archived v1 tables: [`arsenal-hit-tables-v1.md`](arsenal-hit-tables-v1.md).
+Companion to [`../arsenal.md`](../arsenal.md). Archived v1 tables: [`arsenal-hit-tables-v1.md`](arsenal-hit-tables-v1.md).
 
 One table per weapon (**plasma → cluster → cannon**, Mk III→I). Rows are targets (heavy → light). Clear air unless **FogMed**.
 
@@ -15,7 +15,7 @@ One table per weapon (**plasma → cluster → cannon**, Mk III→I). Rows are t
 | **FogMed** | Medium blind into fog; Spray − 2 vs LaneDiff; Reaction ignored (cannon volume play) |
 | **Scatter** | Close, Spray > Acc; P(Track) × P(Spray−Reaction); else NA |
 
-**LaneDiff** from size × band ([`arsenal.md`](arsenal.md)). **Guided (cluster):** LaneDiff = min(raw, 4). **Ace:** +1 LaneDiff.
+**LaneDiff** from size × band ([`../arsenal.md`](../arsenal.md)). **Guided (cluster):** LaneDiff = min(raw, 4). **Ace:** +1 LaneDiff.
 
 4d6 bands: Bounce 0% · Hard 16% · Skew= 44% · Skew+ 56% · Skew− 24% · Lean 76% · Butter 97%. Bounce = 24 only (~0.08%).
 

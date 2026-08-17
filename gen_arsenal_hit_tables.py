@@ -225,7 +225,7 @@ def main() -> None:
 
     header = f"""# Arsenal hit probabilities (v3)
 
-Companion to [`arsenal.md`](arsenal.md). Archives: [`arsenal-hit-tables-v1.md`](arsenal-hit-tables-v1.md), [`arsenal-hit-tables-v2.md`](arsenal-hit-tables-v2.md).
+Companion to [`arsenal.md`](arsenal.md). Archives: [`legacy/arsenal-hit-tables-v1.md`](legacy/arsenal-hit-tables-v1.md), [`legacy/arsenal-hit-tables-v2.md`](legacy/arsenal-hit-tables-v2.md).
 
 Plasma P5→P1 then cannon C2→C1; within each size tier C→A. Rows: targets heavy→light. Clear air unless FogMed. ROF not shown (odds assume the mount may fire).
 

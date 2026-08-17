@@ -79,6 +79,8 @@ python -m http.server -d build/web 8080
 | `build/web/` | Godot Web export output (CI / local; gitignored) |
 | `spec.txt` | Agent-maintained design spec |
 | `instructions.txt` | Freeform scratchpad |
+| `dynamics.md` | Live battle states / transitions |
+| `legacy/` | Full snapshots of mixed/superseded drafts; stubs at root say what to reintroduce |
 
 ## License
 
